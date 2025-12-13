@@ -139,17 +139,10 @@ jobs:
           echo "=== 磁盘空间信息 ==="
           df -h
 
-      - name: Apply HMBIRD patch
-        if: ${{ !inputs.Apply_SCHED }}
-        run: |
-          cp hmbird_patch.c kernel_workspace/kernel_platform/common/drivers/
-          cd kernel_workspace/kernel_platform/common/drivers
-          grep -q "hmbird_patch.o" Makefile || echo "obj-y += hmbird_patch.o" >> Makefile
-
-      - name: Apply SCHED driver
+      - name: Apply SCHED
         if: ${{ inputs.Apply_SCHED }}
         run: |
-          git clone https://github.com/Numbersf/SCHED_PATCH.git -b sm8750 --depth=1
+          git clone https://github.com/Numbersf/SCHED_PATCH.git -b sm8750
           dos2unix SCHED_PATCH/fengchi_oneplus_13t_b.patch
           patch -d kernel_workspace/kernel_platform/common -p1 -F 3 < SCHED_PATCH/fengchi_oneplus_13t_b.patch
 
