@@ -213,18 +213,18 @@ jobs:
           echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> $CONFIG
           
           # 禁用调试功能
-          sed -i 's/^CONFIG_KASAN=y/# CONFIG_KASAN is not set/' $CONFIG
-          sed -i 's/^CONFIG_KASAN_SW_TAGS=y/# CONFIG_KASAN_SW_TAGS is not set/' $CONFIG
-          sed -i 's/^CONFIG_KASAN_HW_TAGS=y/# CONFIG_KASAN_HW_TAGS is not set/' $CONFIG
-          sed -i 's/^CONFIG_UBSAN=y/# CONFIG_UBSAN is not set/' $CONFIG
-          sed -i 's/^CONFIG_SCHED_DEBUG=y/# CONFIG_SCHED_DEBUG is not set/' $CONFIG
-          sed -i 's/^CONFIG_SCHEDSTATS=y/# CONFIG_SCHEDSTATS is not set/' $CONFIG
-          sed -i 's/^CONFIG_AUDIT=y/# CONFIG_AUDIT is not set/' $CONFIG
-          sed -i 's/^CONFIG_AUDITSYSCALL=y/# CONFIG_AUDITSYSCALL is not set/' $CONFIG
-          sed -i 's/^CONFIG_PROFILING=y/# CONFIG_PROFILING is not set/' $CONFIG
-          sed -i 's/^CONFIG_FTRACE=y/# CONFIG_FTRACE is not set/' $CONFIG
-          sed -i 's/^CONFIG_DEBUG_INFO_BTF=y/# CONFIG_DEBUG_INFO_BTF is not set/' $CONFIG
-          sed -i 's/^CONFIG_DEBUG_INFO_BTF_MODULES=y/# CONFIG_DEBUG_INFO_BTF_MODULES is not set/' $CONFIG
+          sed -i 's/^CONFIG_KASAN=y/# CONFIG_KASAN=n/' $CONFIG
+          sed -i 's/^CONFIG_KASAN_SW_TAGS=y/# CONFIG_KASAN_SW_TAGS=n/' $CONFIG
+          sed -i 's/^CONFIG_KASAN_HW_TAGS=y/# CONFIG_KASAN_HW_TAGS=n/' $CONFIG
+          sed -i 's/^CONFIG_UBSAN=y/# CONFIG_UBSAN=n/' $CONFIG
+          sed -i 's/^CONFIG_SCHED_DEBUG=y/# CONFIG_SCHED_DEBUG=n/' $CONFIG
+          sed -i 's/^CONFIG_SCHEDSTATS=y/# CONFIG_SCHEDSTATS=n/' $CONFIG
+          sed -i 's/^CONFIG_AUDIT=y/# CONFIG_AUDIT=n/' $CONFIG
+          sed -i 's/^CONFIG_AUDITSYSCALL=y/# CONFIG_AUDITSYSCALL=n/' $CONFIG
+          sed -i 's/^CONFIG_PROFILING=y/# CONFIG_PROFILING=n/' $CONFIG
+          sed -i 's/^CONFIG_FTRACE=y/# CONFIG_FTRACE=n/' $CONFIG
+          sed -i 's/^CONFIG_DEBUG_INFO_BTF=y/# CONFIG_DEBUG_INFO_BTF=n/' $CONFIG
+          sed -i 's/^CONFIG_DEBUG_INFO_BTF_MODULES=y/# CONFIG_DEBUG_INFO_BTF_MODULES=n/' $CONFIG
           
           # 清理构建检查
           sed -i 's/check_defconfig//' build.config.gki
