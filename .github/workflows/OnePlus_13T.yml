@@ -120,6 +120,7 @@ jobs:
           rm -f kernel_platform/common/android/abi_gki_protected_exports_* || echo "No protected exports"
 
       - name: Apply Convert HMBIRD_OGKI to HMBIRD_GKI
+        if: ${{ !inputs.Apply_SCHED }}
         run: |
           cp hmbird_patch.c kernel_workspace/kernel_platform/common/drivers/
           cd kernel_workspace/kernel_platform/common/drivers
@@ -204,20 +205,6 @@ jobs:
           # 基础优化
           echo "CONFIG_HEADERS_INSTALL=n" >> $CONFIG
           echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> $CONFIG
-          
-          # 禁用调试功能
-          sed -i 's/^CONFIG_KASAN=y/# CONFIG_KASAN=n/' $CONFIG
-          sed -i 's/^CONFIG_KASAN_SW_TAGS=y/# CONFIG_KASAN_SW_TAGS=n/' $CONFIG
-          sed -i 's/^CONFIG_KASAN_HW_TAGS=y/# CONFIG_KASAN_HW_TAGS=n/' $CONFIG
-          sed -i 's/^CONFIG_UBSAN=y/# CONFIG_UBSAN=n/' $CONFIG
-          sed -i 's/^CONFIG_SCHED_DEBUG=y/# CONFIG_SCHED_DEBUG=n/' $CONFIG
-          sed -i 's/^CONFIG_SCHEDSTATS=y/# CONFIG_SCHEDSTATS=n/' $CONFIG
-          sed -i 's/^CONFIG_AUDIT=y/# CONFIG_AUDIT=n/' $CONFIG
-          sed -i 's/^CONFIG_AUDITSYSCALL=y/# CONFIG_AUDITSYSCALL=n/' $CONFIG
-          sed -i 's/^CONFIG_PROFILING=y/# CONFIG_PROFILING=n/' $CONFIG
-          sed -i 's/^CONFIG_FTRACE=y/# CONFIG_FTRACE=n/' $CONFIG
-          sed -i 's/^CONFIG_DEBUG_INFO_BTF=y/# CONFIG_DEBUG_INFO_BTF=n/' $CONFIG
-          sed -i 's/^CONFIG_DEBUG_INFO_BTF_MODULES=y/# CONFIG_DEBUG_INFO_BTF_MODULES=n/' $CONFIG
           
           # 清理构建检查
           sed -i 's/check_defconfig//' build.config.gki
