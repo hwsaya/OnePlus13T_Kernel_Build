@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       pull_kernel_src:
-        description: "是否拉取远程内核源码(否则使用缓存)"
+        description: "是否强制拉取最新远程源码(即使有缓存)"
         required: false
         type: boolean
         default: false
@@ -20,7 +20,7 @@ on:
         default: false
       baseband_guard:
         description: "是否开启内核级基带保护"
-        required: false
+        required: true
         type: boolean
         default: false
 
@@ -41,7 +41,6 @@ jobs:
 
       - name: Install dependencies
         run: |
-          # 增加 pahole，因为我们在轻量化方案中不下载 Google 的 build-tools
           sudo apt-get install -y --no-install-recommends libelf-dev tree dos2unix ccache lld pahole
 
       - name: Cache Neutron Clang
@@ -51,14 +50,17 @@ jobs:
           path: kernel_workspace/neutron-clang
           key: neutron-clang-v1
 
-      - name: Cache kernel source
-        id: kernel-src-cache
+      - name: Cache Repo Metadata
+        id: repo-cache
         uses: actions/cache@v4
         with:
-          path: kernel_workspace/kernel_platform/common
-          key: kernel-src-v6.6.89
-          restore-keys: 
-            kernel-src-v6.6.89
+          # === 关键修复 ===
+          # 缓存 .repo 目录而不是工作区。
+          # 这样可以避免 "unparseable HEAD" 错误，同时保持秒级 Sync 速度。
+          path: kernel_workspace/.repo
+          key: repo-metadata-sm8750-v1
+          restore-keys: |
+            repo-metadata-sm8750-
 
       - name: Cache ccache
         id: ccache-cache
@@ -80,15 +82,26 @@ jobs:
       - name: Initialize repo and sync sources
         run: |
           mkdir -p kernel_workspace && cd kernel_workspace
+          
+          echo ">>> Initializing repo..."
           repo init -u https://github.com/OnePlusOSS/kernel_manifest.git \
             -b refs/heads/oneplus/sm8750 -m oneplus_13t_b.xml --depth=1
 
-          # 仅同步内核源码，完全跳过 Google 的 prebuilts
-          if [ "${{ inputs.pull_kernel_src }}" = "true" ] || \
-             [ "${{ steps.kernel-src-cache.outputs.cache-hit }}" = "false" ]; then
-            repo sync kernel_platform/common \
-              -c --force-sync --optimized-fetch --prune --no-tags --no-clone-bundle \
-              -j$(nproc --all)
+          echo ">>> Syncing sources..."
+          # 如果 inputs.pull_kernel_src 为 true，或者没有缓存，则尝试去远程 fetch
+          # 否则直接利用本地 .repo 缓存进行 checkout，速度极快
+          if [ "${{ inputs.pull_kernel_src }}" = "true" ]; then
+             echo "Force pulling latest source..."
+             repo sync kernel_platform/common \
+               -c --force-sync --optimized-fetch --prune --no-tags --no-clone-bundle \
+               -j$(nproc --all)
+          else
+             echo "Syncing from cache/remote..."
+             # 即使有缓存，也必须运行 sync 来 checkout 代码到工作区
+             # 由于 .repo 存在，这一步是本地操作，非常快
+             repo sync kernel_platform/common \
+               -c --force-sync --optimized-fetch --prune --no-tags --no-clone-bundle \
+               -j$(nproc --all)
           fi
           
           rm kernel_platform/common/android/abi_gki_protected_exports_* || echo "No protected exports!"
@@ -100,17 +113,11 @@ jobs:
           mkdir -p kernel_workspace/neutron-clang
           cd kernel_workspace/neutron-clang
           
-          # 下载 Antman 脚本
           curl -LO "https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman"
           chmod +x antman
-          
-          # -S 自动同步最新稳定版，无需手动指定版本，它会自动处理所有依赖
           ./antman -S
           
-          # 验证
           ./bin/clang --version
-          
-          # 清理脚本
           rm antman patch_glibc.sh || true
 
       - name: Apply Convert HMBIRD_OGKI to HMBIRD_GKI
@@ -182,18 +189,14 @@ jobs:
 
       - name: Build Kernel
         run: |
-          # === 配置 Neutron 路径 ===
           CLANG_DIR="$GITHUB_WORKSPACE/kernel_workspace/neutron-clang"
           
           if [ ! -d "$CLANG_DIR/bin" ]; then
              echo "CRITICAL: Neutron Clang bin missing!"
-             ls -R kernel_workspace/neutron-clang
              exit 1
           fi
           
-          # Neutron 自带所有工具，只需将 bin 加入 PATH
           export PATH="$CLANG_DIR/bin:$PATH"
-          
           echo "Using Compiler:"
           clang --version
           
@@ -203,10 +206,8 @@ jobs:
           ccache -M "${{ env.CCACHE_MAXSIZE }}"
           ccache -z
 
-          echo "=== 开始构建 (使用 Neutron LLVM) ==="
+          echo "=== 开始构建 (Neutron LLVM) ==="
 
-          # 使用 LLVM=1 和 LLVM_IAS=1 启用完整 LLVM 工具链
-          # 不需要指定 CROSS_COMPILE_COMPAT，除非是极其古老的 arm32 支持
           make -j$(nproc --all) \
           LLVM=1 \
           LLVM_IAS=1 \
