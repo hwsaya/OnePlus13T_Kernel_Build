@@ -20,7 +20,7 @@ on:
         default: false
       baseband_guard:
         description: "是否开启内核级基带保护"
-        required: true
+        required: false
         type: boolean
         default: false
 
