@@ -3,11 +3,6 @@ name: OnePlus 13T Kernel Build
 on:
   workflow_dispatch:
     inputs:
-      ksu_version:  
-        description: "KernelSU 版本 (分支名、Tag 或 commit hash)，留空使用最新稳定版"
-        required: false
-        type: string
-        default: ""
       pull_kernel_src:
         description: "是否拉取远程内核源码(否则使用缓存)"
         required: false
@@ -25,7 +20,7 @@ on:
         default: false
       baseband_guard:
         description: "是否开启内核级基带保护"
-        required: true
+        required: false
         type: boolean
         default: false
 
@@ -46,16 +41,14 @@ jobs:
 
       - name: Install dependencies
         run: |
-          sudo apt-get install -y --no-install-recommends libelf-dev tree dos2unix ccache
+          sudo apt-get install -y --no-install-recommends libelf-dev tree dos2unix ccache lld pahole
 
-      - name: Cache prebuilts (clang & build-tools)
-        id: prebuilts-cache
+      - name: Cache Neutron Clang
+        id: neutron-cache
         uses: actions/cache@v4
         with:
-          path: |
-            kernel_workspace/kernel_platform/prebuilts/clang/host/linux-x86/clang-r510928
-            kernel_workspace/kernel_platform/prebuilts/kernel-build-tools/linux-x86
-          key: prebuilts-${{ runner.os }}-v1
+          path: kernel_workspace/neutron-clang
+          key: neutron-clang-v1
 
       - name: Cache kernel source
         id: kernel-src-cache
@@ -77,13 +70,13 @@ jobs:
 
       - name: Configure Git and repo
         run: |
-          git config --global user.email "bot@kernelsu.org"
-          git config --global user.name "KernelSUBot"
+          git config --global user.email "bot@github.com"
+          git config --global user.name "GitHub-Action"
           curl https://storage.googleapis.com/git-repo-downloads/repo > ~/repo
           chmod a+x ~/repo
           sudo mv ~/repo /usr/local/bin/repo
 
-      - name: Initialize repo and sync
+      - name: Initialize repo and sync sources
         run: |
           mkdir -p kernel_workspace && cd kernel_workspace
           repo init -u https://github.com/OnePlusOSS/kernel_manifest.git \
@@ -95,17 +88,24 @@ jobs:
               -c --force-sync --optimized-fetch --prune --no-tags --no-clone-bundle \
               -j$(nproc --all)
           fi
-
-          if [ "${{ steps.prebuilts-cache.outputs.cache-hit }}" = "false" ]; then
-            repo sync kernel_platform/prebuilts/clang/host/linux-x86 \
-                      kernel_platform/prebuilts/kernel-build-tools \
-              -c --force-sync --optimized-fetch --prune --no-tags --no-clone-bundle \
-              -j$(nproc --all)
-          fi
-
+          
           rm kernel_platform/common/android/abi_gki_protected_exports_* || echo "No protected exports!"
 
-      # OGKI 转换 GKI，无需修改 dtbo 开机
+      - name: Download Neutron Clang (Lightweight)
+        if: ${{ steps.neutron-cache.outputs.cache-hit != 'true' }}
+        run: |
+          mkdir -p kernel_workspace/neutron-clang
+          cd kernel_workspace/neutron-clang
+          
+          curl -LO "https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman"
+          chmod +x antman
+          
+          ./antman -S
+          
+          ./bin/clang --version
+          
+          rm antman patch_glibc.sh || true
+
       - name: Apply Convert HMBIRD_OGKI to HMBIRD_GKI
         if: ${{ !inputs.Apply_SCHED }}
         run: |
@@ -121,27 +121,6 @@ jobs:
           git clone https://github.com/Numbersf/SCHED_PATCH.git -b sm8750
           dos2unix SCHED_PATCH/fengchi_oneplus_13t_b.patch
           patch -d kernel_workspace/kernel_platform/common -p1 -F 3 < SCHED_PATCH/fengchi_oneplus_13t_b.patch
-
-      - name: Setup KSU
-        run: |
-          cd kernel_workspace/kernel_platform
-          if [ -n "${{ inputs.ksu_version }}" ]; then
-            echo "[+] 安装指定版本的 KernelSU: ${{ inputs.ksu_version }}"
-            curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s ${{ inputs.ksu_version }}
-          else
-            echo "[+] 安装最新稳定版的 KernelSU"
-            curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
-          fi
-          
-          cd KernelSU
-          COMMIT_HASH=$(git rev-parse --short HEAD)
-          COMMIT_DATE=$(git log -1 --format=%cd --date=short)
-          BRANCH_OR_TAG=$(git describe --tags 2>/dev/null || git branch --show-current)
-
-          echo "=== KernelSU Version Information ==="
-          echo "版本: $BRANCH_OR_TAG"
-          echo "Commit Hash: $COMMIT_HASH"
-          echo "Commit Date: $COMMIT_DATE"
 
       - name: Add iptables extensions
         if: ${{ inputs.better_net }}
@@ -184,11 +163,8 @@ jobs:
       - name: Other tasks
         run: |
           cd kernel_workspace/kernel_platform/common
-          # 跳过将 uapi 标准头安装到 usr/include 目录的不必要操作，节省编译时间
           echo "CONFIG_HEADERS_INSTALL=n" >> ./arch/arm64/configs/gki_defconfig
-          # 开启 O2 编译优化配置
           echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> ./arch/arm64/configs/gki_defconfig
-          # 禁用 defconfig 检查
           sed -i 's/check_defconfig//' ./build.config.gki
 
       - name: Rename make name
@@ -199,40 +175,63 @@ jobs:
 
       - name: Build Kernel
         run: |
+          CLANG_DIR="$GITHUB_WORKSPACE/kernel_workspace/neutron-clang"
+          
+          if [ ! -d "$CLANG_DIR/bin" ]; then
+             echo "CRITICAL: Neutron Clang bin missing!"
+             ls -R kernel_workspace/neutron-clang
+             exit 1
+          fi
+          
+          export PATH="$CLANG_DIR/bin:$PATH"
+          
+          echo "Using Compiler:"
+          clang --version
+          
           cd kernel_workspace/kernel_platform/common
-          export PATH="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/prebuilts/clang/host/linux-x86/clang-r510928/bin:$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/prebuilts/kernel-build-tools/linux-x86/bin:$PATH"
-
+          
           mkdir -p "${{ env.CCACHE_DIR }}"
           ccache -M "${{ env.CCACHE_MAXSIZE }}"
-
           ccache -z
-          echo "=== 构建前 CCache 状态 ==="
-          ccache -s
-
-          make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
-          CC="ccache clang" PAHOLE=pahole LD=ld.lld HOSTLD=ld.lld \
+          
+          make -j$(nproc --all) \
+          LLVM=1 \
+          LLVM_IAS=1 \
+          ARCH=arm64 \
+          CROSS_COMPILE=aarch64-linux-gnu- \
+          CC="ccache clang" \
+          PAHOLE=pahole \
+          LD=ld.lld \
+          HOSTLD=ld.lld \
           O=out gki_defconfig
 
-          make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
-          CC="ccache clang" PAHOLE=pahole LD=ld.lld HOSTLD=ld.lld KCFLAGS+=-O2 KCFLAGS+=-Wno-error \
+          make -j$(nproc --all) \
+          LLVM=1 \
+          LLVM_IAS=1 \
+          ARCH=arm64 \
+          CROSS_COMPILE=aarch64-linux-gnu- \
+          CC="ccache clang" \
+          PAHOLE=pahole \
+          LD=ld.lld \
+          HOSTLD=ld.lld \
+          KCFLAGS+=-O2 \
+          KCFLAGS+=-Wno-error \
           O=out Image
 
           git restore . || true
           git clean -fd || true
 
-          echo "=== 构建后 CCache 状态 ==="
           ccache -s
 
       - name: Make AnyKernel3
         run: |
           git clone https://github.com/Kernel-SU/AnyKernel3.git --depth=1
           cp kernel_workspace/kernel_platform/common/out/arch/arm64/boot/Image ./AnyKernel3/
-          # tree kernel_workspace/kernel_platform/common/out/arch/arm64/ > ./AnyKernel3/tree.txt || true
 
       - name: Upload AnyKernel3
         uses: actions/upload-artifact@v4
         with:
-          name: PKX110_AnyKernel3_ksu${{ inputs.ksu_version && format('_{0}', inputs.ksu_version) || '' }}${{ inputs.Apply_SCHED && '_sched' || '' }}${{ inputs.better_net && '_ipt' || '' }}${{ inputs.baseband_guard && '_bbg' || '' }}
+          name: PKX110_AnyKernel3_NoKSU${{ inputs.Apply_SCHED && '_sched' || '' }}${{ inputs.better_net && '_ipt' || '' }}${{ inputs.baseband_guard && '_bbg' || '' }}
           path: ./AnyKernel3/*
 
       - name: Force Save Ccache
