@@ -13,10 +13,9 @@ config DOCKER
 	
 	select USER_NS
 	select CGROUP_PERF
-	select CGROUP_HUGETLB
 	select NET_CLS_CGROUP
 	select CFS_BANDWIDTH
-	
+
 	select IP_VS
 	select IP_VS_PROTO_TCP
 	select IP_VS_PROTO_UDP
