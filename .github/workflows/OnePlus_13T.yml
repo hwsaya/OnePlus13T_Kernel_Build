@@ -28,6 +28,11 @@ on:
         required: true
         type: boolean
         default: false
+      adocker:
+        description: "是否开启 Docker 支持"
+        required: true
+        type: boolean
+        default: false
 
 jobs:
   build:
@@ -180,6 +185,14 @@ jobs:
           curl -LSs "https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh" | bash
           echo "CONFIG_BBG=y" >> ./arch/arm64/configs/gki_defconfig
           sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/lockdown/lockdown,baseband_guard/ } }' security/Kconfig
+
+      - name: Setup Docker
+        if: ${{ inputs.adocker }}
+        run: |
+          cp -rf docker kernel_workspace/kernel_platform/common/
+          cd kernel_workspace/kernel_platform/common/
+          sed -i "/endmenu/i\source \"docker/Kconfig\"" ./arch/arm64/Kconfig
+          echo "CONFIG_DOCKER=y" >> ./arch/arm64/configs/gki_defconfig
 
       - name: Other tasks
         run: |
