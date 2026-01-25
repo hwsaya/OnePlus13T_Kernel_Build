@@ -5,15 +5,9 @@ config DOCKER
 	default n
 	select PID_NS
 	select IPC_NS
-	select CGROUP_DEVICE
 	select BRIDGE_NETFILTER
-	
-	select CGROUP_CPUACCT
-	select CGROUP_PIDS
-	
+
 	select USER_NS
-	select CGROUP_PERF
-	select NET_CLS_CGROUP
 	select CFS_BANDWIDTH
 
 	select IP_VS
@@ -22,15 +16,15 @@ config DOCKER
 	select IP_VS_NFCT
 	select IP_VS_RR
 	select NETFILTER_XT_MATCH_IPVS
-	
+
 	select VXLAN
 	select IPVLAN
 	select MACVLAN
 	select BRIDGE_VLAN_FILTERING
-	
+
 	select POSIX_MQUEUE
 	select KEYS
-	
+
 	help
 	  此开关专门针对当前内核缺少的 Docker 特性进行补偿。
 
