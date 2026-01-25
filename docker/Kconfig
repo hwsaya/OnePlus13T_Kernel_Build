@@ -8,10 +8,7 @@ config DOCKER
 	select CGROUP_DEVICE
 	select BRIDGE_NETFILTER
 	select POSIX_MQUEUE
-
-	select IP_VS
-	select NETFILTER_XT_MATCH_IPVS
-
+	
 	help
 	  针对当前内核缺少的 Docker 特性进行补偿
 
