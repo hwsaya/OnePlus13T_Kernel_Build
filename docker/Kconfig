@@ -9,6 +9,7 @@ config DOCKER
 	select BRIDGE_NETFILTER
 	select POSIX_MQUEUE
 
+	select IP_VS
 	select NETFILTER_XT_MATCH_IPVS
 
 	help
