@@ -169,8 +169,8 @@ jobs:
             echo "CONFIG_IP_SET_HASH_NETPORT=m"
             echo "CONFIG_IP_SET_HASH_NETIFACE=m"
             echo "CONFIG_IP_SET_LIST_SET=m"
-            echo "CONFIG_IP6_NF_NAT=y"
-            echo "CONFIG_IP6_NF_TARGET_MASQUERADE=y"
+            echo "CONFIG_IP6_NF_NAT=m"
+            echo "CONFIG_IP6_NF_TARGET_MASQUERADE=m"
           } >> ./arch/arm64/configs/gki_defconfig
 
       - name: Setup Baseband-guard
