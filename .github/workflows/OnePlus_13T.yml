@@ -55,16 +55,7 @@ jobs:
           path: |
             kernel_workspace/kernel_platform/prebuilts/clang/host/linux-x86/clang-r510928
             kernel_workspace/kernel_platform/prebuilts/kernel-build-tools/linux-x86
-          key: prebuilts-${{ runner.os }}-v1
-
-      - name: Cache kernel source
-        id: kernel-src-cache
-        uses: actions/cache@v4
-        with:
-          path: kernel_workspace/kernel_platform/common
-          key: kernel-src-v6.6.89
-          restore-keys: 
-            kernel-src-v6.6.89
+          key: prebuilts-${{ runner.os }}-v1      
 
       - name: Cache ccache
         id: ccache-cache
@@ -88,18 +79,18 @@ jobs:
           mkdir -p kernel_workspace && cd kernel_workspace
           repo init -u https://github.com/OnePlusOSS/kernel_manifest.git \
             -b refs/heads/oneplus/sm8750 -m oneplus_13t_b.xml --depth=1
-
-          if [ "${{ inputs.pull_kernel_src }}" = "true" ] || \
-             [ "${{ steps.kernel-src-cache.outputs.cache-hit }}" = "false" ]; then
-            repo sync kernel_platform/common \
-              -c --force-sync --optimized-fetch --prune --no-tags --no-clone-bundle \
-              -j$(nproc --all)
-          fi
-
+         
+          rm -rf kernel_platform/common
+         
+          echo "Starting repo sync..."
+          repo sync kernel_platform/common \
+            -c --force-sync --no-tags --no-clone-bundle \
+            -j$(nproc --all)
+         
           if [ "${{ steps.prebuilts-cache.outputs.cache-hit }}" = "false" ]; then
             repo sync kernel_platform/prebuilts/clang/host/linux-x86 \
                       kernel_platform/prebuilts/kernel-build-tools \
-              -c --force-sync --optimized-fetch --prune --no-tags --no-clone-bundle \
+              -c --force-sync --no-tags --no-clone-bundle \
               -j$(nproc --all)
           fi
 
@@ -121,8 +112,6 @@ jobs:
           git clone https://github.com/Numbersf/SCHED_PATCH.git -b sm8750
           dos2unix SCHED_PATCH/fengchi_oneplus_13t_b.patch
           patch -d kernel_workspace/kernel_platform/common -p1 -F 3 < SCHED_PATCH/fengchi_oneplus_13t_b.patch
-
-      # 已移除 Setup KSU 步骤
 
       - name: Add iptables extensions
         if: ${{ inputs.better_net }}
@@ -173,11 +162,11 @@ jobs:
       - name: Other tasks
         run: |
           cd kernel_workspace/kernel_platform/common
-          # 跳过将 uapi 标准头安装到 usr/include 目录的不必要操作，节省编译时间
+          
           echo "CONFIG_HEADERS_INSTALL=n" >> ./arch/arm64/configs/gki_defconfig
-          # 开启 O2 编译优化配置
+          
           echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> ./arch/arm64/configs/gki_defconfig
-          # 禁用 defconfig 检查
+         
           sed -i 's/check_defconfig//' ./build.config.gki
 
       - name: Rename make name
