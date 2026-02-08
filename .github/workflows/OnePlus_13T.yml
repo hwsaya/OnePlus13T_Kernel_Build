@@ -1,10 +1,10 @@
-name: OnePlus 13T Kernel Build
+name: OnePlus 13T Kernel Build (No KSU + Cached)
 
 on:
   workflow_dispatch:
     inputs:
       pull_kernel_src:
-        description: "是否拉取远程内核源码(否则使用缓存)"
+        description: "是否强制重新拉取所有源码"
         required: false
         type: boolean
         default: false
@@ -46,25 +46,26 @@ jobs:
 
       - name: Install dependencies
         run: |
-          sudo apt-get install -y --no-install-recommends libelf-dev tree dos2unix ccache
+          sudo apt-get install -y --no-install-recommends libelf-dev tree dos2unix ccache lld pahole
 
-      - name: Cache prebuilts (clang & build-tools)
+      # 【恢复】缓存编译器和构建工具 (Prebuilts)
+      # 使用 v2 后缀，确保不读取旧的损坏缓存
+      - name: Cache Prebuilts
         id: prebuilts-cache
         uses: actions/cache@v4
         with:
-          path: |
-            kernel_workspace/kernel_platform/prebuilts/clang/host/linux-x86/clang-r510928
-            kernel_workspace/kernel_platform/prebuilts/kernel-build-tools/linux-x86
-          key: prebuilts-${{ runner.os }}-v1      
+          path: kernel_workspace/kernel_platform/prebuilts
+          key: prebuilts-${{ runner.os }}-sm8750-v2
 
+      # 【保持】CCache 缓存
       - name: Cache ccache
         id: ccache-cache
         uses: actions/cache@v4
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-${{ runner.os }}-oneplus-13t-noksu-v1
+          key: ccache-${{ runner.os }}-oneplus-13t-noksu-v2
           restore-keys: 
-            ccache-${{ runner.os }}-oneplus-13t-noksu-v1-
+            ccache-${{ runner.os }}-oneplus-13t-noksu-v2-
 
       - name: Configure Git and repo
         run: |
@@ -79,24 +80,29 @@ jobs:
           mkdir -p kernel_workspace && cd kernel_workspace
           repo init -u https://github.com/OnePlusOSS/kernel_manifest.git \
             -b refs/heads/oneplus/sm8750 -m oneplus_13t_b.xml --depth=1
-         
+
+          # 1. 始终清理并重新同步内核源码 (common)，避免 HEAD 错误
           rm -rf kernel_platform/common
-         
-          echo "Starting repo sync..."
+          echo "=== Syncing Kernel Source ==="
           repo sync kernel_platform/common \
             -c --force-sync --no-tags --no-clone-bundle \
             -j$(nproc --all)
-         
-          if [ "${{ steps.prebuilts-cache.outputs.cache-hit }}" = "false" ]; then
+
+          # 2. 智能同步 Prebuilts
+          # 如果缓存未命中(cache-hit != true) 或者用户强制拉取，则同步
+          if [ "${{ steps.prebuilts-cache.outputs.cache-hit }}" != "true" ] || [ "${{ inputs.pull_kernel_src }}" = "true" ]; then
+            echo "=== Cache Miss or Force Pull: Syncing Prebuilts ==="
+            rm -rf kernel_platform/prebuilts # 清理可能残留的空目录
             repo sync kernel_platform/prebuilts/clang/host/linux-x86 \
                       kernel_platform/prebuilts/kernel-build-tools \
               -c --force-sync --no-tags --no-clone-bundle \
               -j$(nproc --all)
+          else
+            echo "=== Cache Hit: Skipping Prebuilts Sync ==="
           fi
 
           rm kernel_platform/common/android/abi_gki_protected_exports_* || echo "No protected exports!"
 
-      # OGKI 转换 GKI，无需修改 dtbo 开机
       - name: Apply Convert HMBIRD_OGKI to HMBIRD_GKI
         if: ${{ !inputs.Apply_SCHED }}
         run: |
@@ -162,11 +168,8 @@ jobs:
       - name: Other tasks
         run: |
           cd kernel_workspace/kernel_platform/common
-          
           echo "CONFIG_HEADERS_INSTALL=n" >> ./arch/arm64/configs/gki_defconfig
-          
           echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> ./arch/arm64/configs/gki_defconfig
-         
           sed -i 's/check_defconfig//' ./build.config.gki
 
       - name: Rename make name
@@ -181,28 +184,31 @@ jobs:
           
           echo "=== Setting up Build Environment ==="
           
-          # 【核心修复】动态查找 Clang 目录，不再硬编码 "clang-r510928"
-          # 在 ../prebuilts 目录下寻找以 clang-r 开头的文件夹，取版本最新的一个
-          CLANG_DIR=$(find ../prebuilts/clang/host/linux-x86 -maxdepth 1 -type d -name "clang-r*" | sort -r | head -n 1)
+          # 使用绝对路径定位 prebuilts
+          PREBUILTS_ROOT="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/prebuilts"
+          CLANG_ROOT="$PREBUILTS_ROOT/clang/host/linux-x86"
+          
+          # 即使有缓存，也必须动态查找 Clang 版本目录名
+          CLANG_DIR=$(find "$CLANG_ROOT" -maxdepth 1 -type d -name "clang-r*" | sort -r | head -n 1)
           
           if [ -z "$CLANG_DIR" ]; then
-            echo "❌ Error: 无法找到 Clang 目录！请检查 repo sync prebuilts 是否成功。"
+            echo "❌ Error: 无法找到 Clang 目录！"
+            echo "可能原因：缓存恢复了空目录，或者 repo sync 失败。"
+            echo "Listing $CLANG_ROOT:"
+            ls -al "$CLANG_ROOT" || echo "Root dir missing"
             exit 1
           fi
           
           echo "✅ 自动检测到 Clang 目录: $CLANG_DIR"
           
-          # 【参考你的成功脚本】设置 PATH
-          # 包含 Clang bin 和 Google 提供的 build-tools (里面有 ld.lld)
-          export PATH="$CLANG_DIR/bin:../prebuilts/kernel-build-tools/linux-x86/bin:$PATH"
+          export PATH="$CLANG_DIR/bin:$PREBUILTS_ROOT/kernel-build-tools/linux-x86/bin:$PATH"
           
           # 验证环境
           echo "Using Compiler:"
           clang --version
           
           if ! command -v ld.lld &> /dev/null; then
-             echo "❌ Error: ld.lld 未找到！PATH 设置可能有误。"
-             echo "Current PATH: $PATH"
+             echo "❌ Error: ld.lld 未找到！"
              exit 1
           fi
 
@@ -212,7 +218,6 @@ jobs:
           
           echo "=== 开始编译 ==="
 
-          # 【参考你的成功脚本】添加 LLVM_IAS=1 (集成汇编器)，这通常能提高兼容性
           make -j$(nproc --all) \
             LLVM=1 \
             LLVM_IAS=1 \
@@ -243,7 +248,6 @@ jobs:
           echo "=== CCache 统计 ==="
           ccache -s
 
-
       - name: Make AnyKernel3
         run: |
           git clone https://github.com/Kernel-SU/AnyKernel3.git --depth=1
@@ -272,4 +276,4 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-${{ runner.os }}-oneplus-13t-noksu-v1-${{ github.run_id }}
+          key: ccache-${{ runner.os }}-oneplus-13t-noksu-v2-${{ github.run_id }}
