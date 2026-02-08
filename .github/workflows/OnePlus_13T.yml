@@ -3,11 +3,6 @@ name: OnePlus 13T Kernel Build
 on:
   workflow_dispatch:
     inputs:
-      ksu_version:  
-        description: "KernelSU 版本 (分支名、Tag 或 commit hash)，留空使用最新稳定版"
-        required: false
-        type: string
-        default: ""
       pull_kernel_src:
         description: "是否拉取远程内核源码(否则使用缓存)"
         required: false
@@ -76,14 +71,14 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-${{ runner.os }}-oneplus-13t-v1
+          key: ccache-${{ runner.os }}-oneplus-13t-noksu-v1
           restore-keys: 
-            ccache-${{ runner.os }}-oneplus-13t-v1-
+            ccache-${{ runner.os }}-oneplus-13t-noksu-v1-
 
       - name: Configure Git and repo
         run: |
-          git config --global user.email "bot@kernelsu.org"
-          git config --global user.name "KernelSUBot"
+          git config --global user.email "action@github.com"
+          git config --global user.name "GitHub Action"
           curl https://storage.googleapis.com/git-repo-downloads/repo > ~/repo
           chmod a+x ~/repo
           sudo mv ~/repo /usr/local/bin/repo
@@ -127,26 +122,7 @@ jobs:
           dos2unix SCHED_PATCH/fengchi_oneplus_13t_b.patch
           patch -d kernel_workspace/kernel_platform/common -p1 -F 3 < SCHED_PATCH/fengchi_oneplus_13t_b.patch
 
-      - name: Setup KSU
-        run: |
-          cd kernel_workspace/kernel_platform
-          if [ -n "${{ inputs.ksu_version }}" ]; then
-            echo "[+] 安装指定版本的 KernelSU: ${{ inputs.ksu_version }}"
-            curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s ${{ inputs.ksu_version }}
-          else
-            echo "[+] 安装最新稳定版的 KernelSU"
-            curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
-          fi
-          
-          cd KernelSU
-          COMMIT_HASH=$(git rev-parse --short HEAD)
-          COMMIT_DATE=$(git log -1 --format=%cd --date=short)
-          BRANCH_OR_TAG=$(git describe --tags 2>/dev/null || git branch --show-current)
-
-          echo "=== KernelSU Version Information ==="
-          echo "版本: $BRANCH_OR_TAG"
-          echo "Commit Hash: $COMMIT_HASH"
-          echo "Commit Date: $COMMIT_DATE"
+      # 已移除 Setup KSU 步骤
 
       - name: Add iptables extensions
         if: ${{ inputs.better_net }}
@@ -244,7 +220,7 @@ jobs:
       - name: Upload AnyKernel3
         uses: actions/upload-artifact@v4
         with:
-          name: PKX110_AnyKernel3_ksu${{ inputs.ksu_version && format('_{0}', inputs.ksu_version) || '' }}${{ inputs.Apply_SCHED && '_sched' || '' }}${{ inputs.better_net && '_ipt' || '' }}${{ inputs.baseband_guard && '_bbg' || '' }}${{ inputs.adocker && '_docker' || '' }}
+          name: PKX110_AnyKernel3_NoKSU${{ inputs.Apply_SCHED && '_sched' || '' }}${{ inputs.better_net && '_ipt' || '' }}${{ inputs.baseband_guard && '_bbg' || '' }}${{ inputs.adocker && '_docker' || '' }}
           path: ./AnyKernel3/*
 
       - name: Extract All Kernel Modules
@@ -264,4 +240,4 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-${{ runner.os }}-oneplus-13t-v1-${{ github.run_id }}
+          key: ccache-${{ runner.os }}-oneplus-13t-noksu-v1-${{ github.run_id }}
