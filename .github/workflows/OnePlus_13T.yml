@@ -178,28 +178,71 @@ jobs:
       - name: Build Kernel
         run: |
           cd kernel_workspace/kernel_platform/common
-          export PATH="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/prebuilts/clang/host/linux-x86/clang-r510928/bin:$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/prebuilts/kernel-build-tools/linux-x86/bin:$PATH"
+          
+          echo "=== Setting up Build Environment ==="
+          
+          # 【核心修复】动态查找 Clang 目录，不再硬编码 "clang-r510928"
+          # 在 ../prebuilts 目录下寻找以 clang-r 开头的文件夹，取版本最新的一个
+          CLANG_DIR=$(find ../prebuilts/clang/host/linux-x86 -maxdepth 1 -type d -name "clang-r*" | sort -r | head -n 1)
+          
+          if [ -z "$CLANG_DIR" ]; then
+            echo "❌ Error: 无法找到 Clang 目录！请检查 repo sync prebuilts 是否成功。"
+            exit 1
+          fi
+          
+          echo "✅ 自动检测到 Clang 目录: $CLANG_DIR"
+          
+          # 【参考你的成功脚本】设置 PATH
+          # 包含 Clang bin 和 Google 提供的 build-tools (里面有 ld.lld)
+          export PATH="$CLANG_DIR/bin:../prebuilts/kernel-build-tools/linux-x86/bin:$PATH"
+          
+          # 验证环境
+          echo "Using Compiler:"
+          clang --version
+          
+          if ! command -v ld.lld &> /dev/null; then
+             echo "❌ Error: ld.lld 未找到！PATH 设置可能有误。"
+             echo "Current PATH: $PATH"
+             exit 1
+          fi
 
           mkdir -p "${{ env.CCACHE_DIR }}"
           ccache -M "${{ env.CCACHE_MAXSIZE }}"
-
           ccache -z
-          echo "=== 构建前 CCache 状态 ==="
-          ccache -s
+          
+          echo "=== 开始编译 ==="
 
-          make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
-          CC="ccache clang" PAHOLE=pahole LD=ld.lld HOSTLD=ld.lld \
-          O=out gki_defconfig
+          # 【参考你的成功脚本】添加 LLVM_IAS=1 (集成汇编器)，这通常能提高兼容性
+          make -j$(nproc --all) \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            ARCH=arm64 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CC="ccache clang" \
+            PAHOLE=pahole \
+            LD=ld.lld \
+            HOSTLD=ld.lld \
+            O=out gki_defconfig
 
-          make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
-          CC="ccache clang" PAHOLE=pahole LD=ld.lld HOSTLD=ld.lld KCFLAGS+=-O2 KCFLAGS+=-Wno-error \
-          O=out all
+          make -j$(nproc --all) \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            ARCH=arm64 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CC="ccache clang" \
+            PAHOLE=pahole \
+            LD=ld.lld \
+            HOSTLD=ld.lld \
+            KCFLAGS+=-O2 \
+            KCFLAGS+=-Wno-error \
+            O=out all
 
           git restore . || true
           git clean -fd || true
 
-          echo "=== 构建后 CCache 状态 ==="
+          echo "=== CCache 统计 ==="
           ccache -s
+
 
       - name: Make AnyKernel3
         run: |
