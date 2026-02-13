@@ -1,4 +1,4 @@
-name: OnePlus 13T Kernel Build (No KSU + Cached)
+name: OnePlus 13T Kernel Build
 
 on:
   workflow_dispatch:
