@@ -1,4 +1,4 @@
-name: OnePlus 13T Kernel Build
+Name: OnePlus 13T Kernel Build
 
 on:
   workflow_dispatch:
@@ -15,11 +15,6 @@ on:
         default: false
       better_net:
         description: "是否开启网络功能增强配置"
-        required: false
-        type: boolean
-        default: false
-      nftables:
-        description: "是否开启 nftables 支持"
         required: false
         type: boolean
         default: false
@@ -51,13 +46,10 @@ jobs:
 
       - name: Install dependencies
         run: |
-          sudo apt-mark hold firefox
-          sudo apt-mark hold libc-bin
-          sudo apt purge man-db -y
-          sudo apt-get install -y --no-install-recommends \
-            libelf-dev tree dos2unix ccache lld pahole \
-            libssl-dev binutils python-is-python3 zstd
+          sudo apt-get install -y --no-install-recommends libelf-dev tree dos2unix ccache lld pahole
 
+      # 【恢复】缓存编译器和构建工具 (Prebuilts)
+      # 使用 v2 后缀，确保不读取旧的损坏缓存
       - name: Cache Prebuilts
         id: prebuilts-cache
         uses: actions/cache@v4
@@ -65,61 +57,15 @@ jobs:
           path: kernel_workspace/kernel_platform/prebuilts
           key: prebuilts-${{ runner.os }}-sm8750-v2
 
-      - name: Cache Kernel Source
-        id: kernel-src-cache
-        uses: actions/cache@v4
-        with:
-          path: kernel_workspace/kernel_platform/common
-          key: kernel-src-${{ runner.os }}-sm8750
-
+      # 【保持】CCache 缓存
       - name: Cache ccache
         id: ccache-cache
         uses: actions/cache@v4
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-${{ runner.os }}-oneplus-13t-v1-${{ github.run_number }}
-          restore-keys: |
-            ccache-${{ runner.os }}-oneplus-13t-v1
-
-      - name: Pull public ccache fallback
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          if [ -d "${{ env.CCACHE_DIR }}" ] && [ "$(ls -A ${{ env.CCACHE_DIR }} 2>/dev/null)" ]; then
-            echo "本地 ccache 命中，跳过公共 ccache 拉取"
-            exit 0
-          fi
-          echo "未命中本地缓存，尝试拉取公共 ccache..."
-          mkdir -p ${{ env.CCACHE_DIR }}
-          FILE_NAME="ccache-6.6.89.tar.zst"
-          if gh release download -p "$FILE_NAME" -R cctv18/public_ccache 2>/dev/null; then
-            echo "成功下载 $FILE_NAME，正在解压..."
-            tar -I zstd -xf "$FILE_NAME" -C ${{ env.CCACHE_DIR }}
-            rm -f "$FILE_NAME"
-            echo "公共 ccache 恢复完成"
-          else
-            echo "公共 ccache 中未找到对应文件，将进行全量编译"
-          fi
-
-      - name: Cache libfaketime
-        id: libfaketime-cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            ${{ github.workspace }}/libfakestat.so
-            ${{ github.workspace }}/libfaketimeMT.so
-          key: libfaketime-${{ runner.os }}-v1
-
-      - name: Build libfaketime
-        if: ${{ steps.libfaketime-cache.outputs.cache-hit != 'true' }}
-        run: |
-          git clone --depth=1 https://github.com/wolfcw/libfaketime
-          cd libfaketime
-          make -j$(nproc)
-          cp src/libfaketime.so.1 ${{ github.workspace }}/libfakestat.so
-          make -j$(nproc) FAKETIME_MT=1
-          cp src/libfaketimeMT.so.1 ${{ github.workspace }}/libfaketimeMT.so
-          echo "✅ libfaketime 编译完成"
+          key: ccache-${{ runner.os }}-oneplus-13t-noksu-v2
+          restore-keys: 
+            ccache-${{ runner.os }}-oneplus-13t-noksu-v2-
 
       - name: Configure Git and repo
         run: |
@@ -135,19 +81,18 @@ jobs:
           repo init -u https://github.com/OnePlusOSS/kernel_manifest.git \
             -b refs/heads/oneplus/sm8750 -m oneplus_13t_b.xml --depth=1
 
-          if [ "${{ steps.kernel-src-cache.outputs.cache-hit }}" != "true" ] || [ "${{ inputs.pull_kernel_src }}" = "true" ]; then
-            echo "=== Syncing Kernel Source ==="
-            rm -rf kernel_platform/common
-            repo sync kernel_platform/common \
-              -c --force-sync --no-tags --no-clone-bundle \
-              -j$(nproc --all)
-          else
-            echo "=== Cache Hit: Skipping Kernel Source Sync ==="
-          fi
+          # 1. 始终清理并重新同步内核源码 (common)，避免 HEAD 错误
+          rm -rf kernel_platform/common
+          echo "=== Syncing Kernel Source ==="
+          repo sync kernel_platform/common \
+            -c --force-sync --no-tags --no-clone-bundle \
+            -j$(nproc --all)
 
+          # 2. 智能同步 Prebuilts
+          # 如果缓存未命中(cache-hit != true) 或者用户强制拉取，则同步
           if [ "${{ steps.prebuilts-cache.outputs.cache-hit }}" != "true" ] || [ "${{ inputs.pull_kernel_src }}" = "true" ]; then
-            echo "=== Syncing Prebuilts ==="
-            rm -rf kernel_platform/prebuilts
+            echo "=== Cache Miss or Force Pull: Syncing Prebuilts ==="
+            rm -rf kernel_platform/prebuilts # 清理可能残留的空目录
             repo sync kernel_platform/prebuilts/clang/host/linux-x86 \
                       kernel_platform/prebuilts/kernel-build-tools \
               -c --force-sync --no-tags --no-clone-bundle \
@@ -172,9 +117,9 @@ jobs:
         run: |
           git clone https://github.com/Numbersf/SCHED_PATCH.git -b sm8750
           dos2unix SCHED_PATCH/fengchi_oneplus_13t_b.patch
-          patch -d kernel_workspace/kernel_platform/common -p1 -F 3 < SCHED_PATCH/fengchi_oneplus_13t_b.patch || true
+          patch -d kernel_workspace/kernel_platform/common -p1 -F 3 < SCHED_PATCH/fengchi_oneplus_13t_b.patch
 
-      - name: Add iptables extensions
+      - name: Add network and nftables extensions
         if: ${{ inputs.better_net }}
         run: |
           cd kernel_workspace/kernel_platform/common
@@ -202,14 +147,6 @@ jobs:
             echo "CONFIG_IP_SET_LIST_SET=y"
             echo "CONFIG_IP6_NF_NAT=y"
             echo "CONFIG_IP6_NF_TARGET_MASQUERADE=y"
-          } >> ./arch/arm64/configs/gki_defconfig
-
-      - name: Add nftables support
-        if: ${{ inputs.nftables }}
-        run: |
-          cd kernel_workspace/kernel_platform/common
-          sed -i '/# CONFIG_NF_TABLES is not set/d' ./arch/arm64/configs/gki_defconfig
-          {
             echo "CONFIG_NF_TABLES=y"
             echo "CONFIG_NF_TABLES_INET=y"
             echo "CONFIG_NF_TABLES_IPV4=y"
@@ -268,73 +205,83 @@ jobs:
       - name: Build Kernel
         run: |
           cd kernel_workspace/kernel_platform/common
-
+          
+          echo "=== Setting up Build Environment ==="
+          
+          # 使用绝对路径定位 prebuilts
           PREBUILTS_ROOT="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/prebuilts"
-          CLANG_DIR=$(find "$PREBUILTS_ROOT/clang/host/linux-x86" -maxdepth 1 -type d -name "clang-r*" | sort -r | head -n 1)
-
+          CLANG_ROOT="$PREBUILTS_ROOT/clang/host/linux-x86"
+          
+          # 即使有缓存，也必须动态查找 Clang 版本目录名
+          CLANG_DIR=$(find "$CLANG_ROOT" -maxdepth 1 -type d -name "clang-r*" | sort -r | head -n 1)
+          
           if [ -z "$CLANG_DIR" ]; then
             echo "❌ Error: 无法找到 Clang 目录！"
+            echo "可能原因：缓存恢复了空目录，或者 repo sync 失败。"
+            echo "Listing $CLANG_ROOT:"
+            ls -al "$CLANG_ROOT" || echo "Root dir missing"
             exit 1
           fi
-
+          
+          echo "✅ 自动检测到 Clang 目录: $CLANG_DIR"
+          
           export PATH="$CLANG_DIR/bin:$PREBUILTS_ROOT/kernel-build-tools/linux-x86/bin:$PATH"
-          echo "✅ 使用 Clang: $(clang --version | head -1)"
-
+          
+          # 验证环境
+          echo "Using Compiler:"
+          clang --version
+          
           if ! command -v ld.lld &> /dev/null; then
-            echo "❌ Error: ld.lld 未找到！"
-            exit 1
+             echo "❌ Error: ld.lld 未找到！"
+             exit 1
           fi
 
           mkdir -p "${{ env.CCACHE_DIR }}"
           ccache -M "${{ env.CCACHE_MAXSIZE }}"
-          ccache -o compression=true
-          echo "sloppiness = file_stat_matches,include_file_ctime,include_file_mtime,pch_defines,file_macro,time_macros" >> "${{ env.CCACHE_DIR }}/ccache.conf"
           ccache -z
-
-          sudo rm -rf /usr/share/dotnet &
-          sudo rm -rf /usr/local/lib/android &
-          sudo rm -rf /opt/ghc &
-          sudo rm -rf /opt/hostedtoolcache/CodeQL &
-
+          
           echo "=== 开始编译 ==="
-          df -h
 
           make -j$(nproc --all) \
-            LLVM=1 LLVM_IAS=1 ARCH=arm64 \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            ARCH=arm64 \
             CROSS_COMPILE=aarch64-linux-gnu- \
             CC="ccache clang" \
-            PAHOLE=pahole LD=ld.lld HOSTLD=ld.lld \
-            KCFLAGS+=-Wno-error \
+            PAHOLE=pahole \
+            LD=ld.lld \
+            HOSTLD=ld.lld \
             O=out gki_defconfig
 
           make -j$(nproc --all) \
-            LLVM=1 LLVM_IAS=1 ARCH=arm64 \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            ARCH=arm64 \
             CROSS_COMPILE=aarch64-linux-gnu- \
             CC="ccache clang" \
-            PAHOLE=pahole LD=ld.lld HOSTLD=ld.lld \
+            PAHOLE=pahole \
+            LD=ld.lld \
+            HOSTLD=ld.lld \
+            KCFLAGS+=-O2 \
             KCFLAGS+=-Wno-error \
-            O=out Image
+            O=out all
+
+          git restore . || true
+          git clean -fd || true
 
           echo "=== CCache 统计 ==="
           ccache -s
-          echo "=== 编译后磁盘空间 ==="
-          df -h
 
       - name: Make AnyKernel3
         run: |
           git clone https://github.com/Kernel-SU/AnyKernel3.git --depth=1
           cp kernel_workspace/kernel_platform/common/out/arch/arm64/boot/Image ./AnyKernel3/
-          if [[ ! -f ./AnyKernel3/Image ]]; then
-            echo "❌ 未找到内核镜像文件"
-            exit 1
-          fi
-          cd AnyKernel3
-          rm -rf .git
-          AK3_NAME="AnyKernel3_OnePlus13T${{ inputs.Apply_SCHED && '_sched' || '' }}${{ inputs.better_net && '_ipt' || '' }}${{ inputs.nftables && '_nft' || '' }}${{ inputs.baseband_guard && '_bbg' || '' }}${{ inputs.adocker && '_docker' || '' }}_$(date +%Y%m%d).zip"
-          zip -r "../$AK3_NAME" ./*
-          cd ..
-          echo "AK3_NAME=$AK3_NAME" >> $GITHUB_ENV
-          echo "✅ 打包完成：$AK3_NAME"
+
+      - name: Upload AnyKernel3
+        uses: actions/upload-artifact@v4
+        with:
+          name: PKX110_AnyKernel3_NoKSU${{ inputs.Apply_SCHED && '_sched' || '' }}${{ inputs.better_net && '_ipt' || '' }}${{ inputs.baseband_guard && '_bbg' || '' }}${{ inputs.adocker && '_docker' || '' }}
+          path: ./AnyKernel3/*
 
       - name: Extract All Kernel Modules
         run: |
@@ -349,27 +296,9 @@ jobs:
           name: kernel-modules
           path: ./all_modules/
 
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: kernel-${{ github.run_number }}-${{ github.run_attempt }}
-          name: "OnePlus 13T Kernel #${{ github.run_number }}${{ inputs.Apply_SCHED && ' +sched' || '' }}${{ inputs.better_net && ' +ipt' || '' }}${{ inputs.nftables && ' +nft' || '' }}${{ inputs.baseband_guard && ' +bbg' || '' }}${{ inputs.adocker && ' +docker' || '' }}"
-          body: |
-            ## OnePlus 13T Kernel Build
-
-            | 选项 | 状态 |
-            |---|---|
-            | 风驰调度 | ${{ inputs.Apply_SCHED && '✅' || '❌' }} |
-            | 网络增强 (ipset) | ${{ inputs.better_net && '✅' || '❌' }} |
-            | nftables | ${{ inputs.nftables && '✅' || '❌' }} |
-            | 基带保护 | ${{ inputs.baseband_guard && '✅' || '❌' }} |
-            | Docker | ${{ inputs.adocker && '✅' || '❌' }} |
-          files: ./${{ env.AK3_NAME }}
-          token: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Force Save Ccache
-        if: ${{ steps.ccache-cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-${{ runner.os }}-oneplus-13t-v1-${{ github.run_id }}
+          key: ccache-${{ runner.os }}-oneplus-13t-noksu-v2-${{ github.run_id }}
+
