@@ -33,6 +33,8 @@ jobs:
   build:
     name: OnePlus 13T Kernel Build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       CCACHE_COMPILERCHECK: "none"
       CCACHE_COMPRESS: "1"
@@ -46,10 +48,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          sudo apt-get install -y --no-install-recommends libelf-dev tree dos2unix ccache lld pahole
+          sudo apt-get install -y --no-install-recommends libelf-dev tree dos2unix ccache lld pahole zip
 
-      # 【恢复】缓存编译器和构建工具 (Prebuilts)
-      # 使用 v2 后缀，确保不读取旧的损坏缓存
       - name: Cache Prebuilts
         id: prebuilts-cache
         uses: actions/cache@v4
@@ -57,7 +57,6 @@ jobs:
           path: kernel_workspace/kernel_platform/prebuilts
           key: prebuilts-${{ runner.os }}-sm8750-v2
 
-      # 【保持】CCache 缓存
       - name: Cache ccache
         id: ccache-cache
         uses: actions/cache@v4
@@ -81,18 +80,15 @@ jobs:
           repo init -u https://github.com/OnePlusOSS/kernel_manifest.git \
             -b refs/heads/oneplus/sm8750 -m oneplus_13t_b.xml --depth=1
 
-          # 1. 始终清理并重新同步内核源码 (common)，避免 HEAD 错误
           rm -rf kernel_platform/common
           echo "=== Syncing Kernel Source ==="
           repo sync kernel_platform/common \
             -c --force-sync --no-tags --no-clone-bundle \
             -j$(nproc --all)
 
-          # 2. 智能同步 Prebuilts
-          # 如果缓存未命中(cache-hit != true) 或者用户强制拉取，则同步
           if [ "${{ steps.prebuilts-cache.outputs.cache-hit }}" != "true" ] || [ "${{ inputs.pull_kernel_src }}" = "true" ]; then
             echo "=== Cache Miss or Force Pull: Syncing Prebuilts ==="
-            rm -rf kernel_platform/prebuilts # 清理可能残留的空目录
+            rm -rf kernel_platform/prebuilts 
             repo sync kernel_platform/prebuilts/clang/host/linux-x86 \
                       kernel_platform/prebuilts/kernel-build-tools \
               -c --force-sync --no-tags --no-clone-bundle \
@@ -206,42 +202,21 @@ jobs:
         run: |
           cd kernel_workspace/kernel_platform/common
           
-          echo "=== Setting up Build Environment ==="
-          
-          # 使用绝对路径定位 prebuilts
           PREBUILTS_ROOT="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/prebuilts"
           CLANG_ROOT="$PREBUILTS_ROOT/clang/host/linux-x86"
           
-          # 即使有缓存，也必须动态查找 Clang 版本目录名
           CLANG_DIR=$(find "$CLANG_ROOT" -maxdepth 1 -type d -name "clang-r*" | sort -r | head -n 1)
           
           if [ -z "$CLANG_DIR" ]; then
-            echo "❌ Error: 无法找到 Clang 目录！"
-            echo "可能原因：缓存恢复了空目录，或者 repo sync 失败。"
-            echo "Listing $CLANG_ROOT:"
-            ls -al "$CLANG_ROOT" || echo "Root dir missing"
             exit 1
           fi
           
-          echo "✅ 自动检测到 Clang 目录: $CLANG_DIR"
-          
           export PATH="$CLANG_DIR/bin:$PREBUILTS_ROOT/kernel-build-tools/linux-x86/bin:$PATH"
           
-          # 验证环境
-          echo "Using Compiler:"
-          clang --version
-          
-          if ! command -v ld.lld &> /dev/null; then
-             echo "❌ Error: ld.lld 未找到！"
-             exit 1
-          fi
-
           mkdir -p "${{ env.CCACHE_DIR }}"
           ccache -M "${{ env.CCACHE_MAXSIZE }}"
           ccache -z
           
-          echo "=== 开始编译 ==="
-
           make -j$(nproc --all) \
             LLVM=1 \
             LLVM_IAS=1 \
@@ -268,8 +243,6 @@ jobs:
 
           git restore . || true
           git clean -fd || true
-
-          echo "=== CCache 统计 ==="
           ccache -s
 
       - name: Make AnyKernel3
@@ -282,6 +255,28 @@ jobs:
         with:
           name: PKX110_AnyKernel3_NoKSU${{ inputs.Apply_SCHED && '_sched' || '' }}${{ inputs.better_net && '_ipt' || '' }}${{ inputs.baseband_guard && '_bbg' || '' }}${{ inputs.adocker && '_docker' || '' }}
           path: ./AnyKernel3/*
+
+      - name: Zip AnyKernel3 for Release
+        run: |
+          ZIP_NAME="AnyKernel3_OnePlus13T_NoKSU${{ inputs.Apply_SCHED && '_sched' || '' }}${{ inputs.better_net && '_ipt' || '' }}${{ inputs.baseband_guard && '_bbg' || '' }}${{ inputs.adocker && '_docker' || '' }}.zip"
+          cd AnyKernel3
+          zip -r9 "../$ZIP_NAME" * -x .git README.md *placeholder
+          echo "ZIP_FILE=$ZIP_NAME" >> $GITHUB_ENV
+
+      - name: Create Release and Upload
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: Build-${{ github.run_id }}
+          name: OnePlus 13T Kernel Build - ${{ github.run_id }}
+          files: ${{ env.ZIP_FILE }}
+          body: |
+            自动编译构建的 OnePlus 13T 内核。
+            调度(Apply_SCHED): ${{ inputs.Apply_SCHED }}
+            网络增强(better_net): ${{ inputs.better_net }}
+            基带保护(baseband_guard): ${{ inputs.baseband_guard }}
+            Docker支持(adocker): ${{ inputs.adocker }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Extract All Kernel Modules
         run: |
@@ -301,4 +296,3 @@ jobs:
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-${{ runner.os }}-oneplus-13t-noksu-v2-${{ github.run_id }}
-
