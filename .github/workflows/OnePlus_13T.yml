@@ -122,7 +122,17 @@ jobs:
 
           rm kernel_platform/common/android/abi_gki_protected_exports_* || echo "No protected exports!"
 
+      - name: Cache libfaketime
+        id: libfaketime-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/libfakestat.so
+            ${{ github.workspace }}/libfaketimeMT.so
+          key: libfaketime-${{ runner.os }}-v1
+
       - name: Build libfaketime
+        if: ${{ steps.libfaketime-cache.outputs.cache-hit != 'true' }}
         run: |
           git clone --depth=1 https://github.com/wolfcw/libfaketime
           cd libfaketime
