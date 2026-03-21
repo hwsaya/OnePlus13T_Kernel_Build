@@ -302,6 +302,25 @@ jobs:
           name: kernel-modules
           path: ./all_modules/
 
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: kernel-${{ github.run_number }}
+          name: "OnePlus 13T Kernel #${{ github.run_number }}${{ inputs.Apply_SCHED && ' +sched' || '' }}${{ inputs.better_net && ' +ipt' || '' }}${{ inputs.nftables && ' +nft' || '' }}${{ inputs.baseband_guard && ' +bbg' || '' }}${{ inputs.adocker && ' +docker' || '' }}"
+          body: |
+            ## OnePlus 13T Kernel Build
+
+            | 选项 | 状态 |
+            |---|---|
+            | 风驰调度 | ${{ inputs.Apply_SCHED && '✅' || '❌' }} |
+            | 网络增强 (ipset) | ${{ inputs.better_net && '✅' || '❌' }} |
+            | nftables | ${{ inputs.nftables && '✅' || '❌' }} |
+            | 基带保护 | ${{ inputs.baseband_guard && '✅' || '❌' }} |
+            | Docker | ${{ inputs.adocker && '✅' || '❌' }} |
+          files: ./AnyKernel3/*
+          token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Force Save Ccache
         uses: actions/cache/save@v4
         with:
