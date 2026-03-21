@@ -1,4 +1,4 @@
-Name: OnePlus 13T Kernel Build
+name: OnePlus 13T Kernel Build
 
 on:
   workflow_dispatch:
@@ -33,6 +33,7 @@ jobs:
   build:
     name: OnePlus 13T Kernel Build
     runs-on: ubuntu-latest
+    # ✅ 新增：发布 Release 需要写权限
     permissions:
       contents: write
     env:
@@ -88,7 +89,7 @@ jobs:
 
           if [ "${{ steps.prebuilts-cache.outputs.cache-hit }}" != "true" ] || [ "${{ inputs.pull_kernel_src }}" = "true" ]; then
             echo "=== Cache Miss or Force Pull: Syncing Prebuilts ==="
-            rm -rf kernel_platform/prebuilts 
+            rm -rf kernel_platform/prebuilts
             repo sync kernel_platform/prebuilts/clang/host/linux-x86 \
                       kernel_platform/prebuilts/kernel-build-tools \
               -c --force-sync --no-tags --no-clone-bundle \
@@ -115,11 +116,13 @@ jobs:
           dos2unix SCHED_PATCH/fengchi_oneplus_13t_b.patch
           patch -d kernel_workspace/kernel_platform/common -p1 -F 3 < SCHED_PATCH/fengchi_oneplus_13t_b.patch
 
-      - name: Add network and nftables extensions
+      # ✅ 改动：合并了原 iptables 配置 + 新增 nftables 配置，统一由 better_net 控制
+      - name: Add iptables & nftables extensions
         if: ${{ inputs.better_net }}
         run: |
           cd kernel_workspace/kernel_platform/common
           {
+            # --- iptables / IP Set ---
             echo "CONFIG_BPF_STREAM_PARSER=y"
             echo "CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y"
             echo "CONFIG_NETFILTER_XT_SET=y"
@@ -143,6 +146,7 @@ jobs:
             echo "CONFIG_IP_SET_LIST_SET=y"
             echo "CONFIG_IP6_NF_NAT=y"
             echo "CONFIG_IP6_NF_TARGET_MASQUERADE=y"
+            # --- nftables ---
             echo "CONFIG_NF_TABLES=y"
             echo "CONFIG_NF_TABLES_INET=y"
             echo "CONFIG_NF_TABLES_IPV4=y"
@@ -202,47 +206,57 @@ jobs:
         run: |
           cd kernel_workspace/kernel_platform/common
           
+          echo "=== Setting up Build Environment ==="
+          
           PREBUILTS_ROOT="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/prebuilts"
           CLANG_ROOT="$PREBUILTS_ROOT/clang/host/linux-x86"
           
           CLANG_DIR=$(find "$CLANG_ROOT" -maxdepth 1 -type d -name "clang-r*" | sort -r | head -n 1)
           
           if [ -z "$CLANG_DIR" ]; then
+            echo "❌ Error: 无法找到 Clang 目录！"
+            echo "Listing $CLANG_ROOT:"
+            ls -al "$CLANG_ROOT" || echo "Root dir missing"
             exit 1
           fi
           
+          echo "✅ 自动检测到 Clang 目录: $CLANG_DIR"
+          
           export PATH="$CLANG_DIR/bin:$PREBUILTS_ROOT/kernel-build-tools/linux-x86/bin:$PATH"
           
+          echo "Using Compiler:"
+          clang --version
+          
+          if ! command -v ld.lld &> /dev/null; then
+             echo "❌ Error: ld.lld 未找到！"
+             exit 1
+          fi
+
           mkdir -p "${{ env.CCACHE_DIR }}"
           ccache -M "${{ env.CCACHE_MAXSIZE }}"
           ccache -z
           
+          echo "=== 开始编译 ==="
+
           make -j$(nproc --all) \
-            LLVM=1 \
-            LLVM_IAS=1 \
-            ARCH=arm64 \
+            LLVM=1 LLVM_IAS=1 ARCH=arm64 \
             CROSS_COMPILE=aarch64-linux-gnu- \
-            CC="ccache clang" \
-            PAHOLE=pahole \
-            LD=ld.lld \
-            HOSTLD=ld.lld \
+            CC="ccache clang" PAHOLE=pahole \
+            LD=ld.lld HOSTLD=ld.lld \
             O=out gki_defconfig
 
           make -j$(nproc --all) \
-            LLVM=1 \
-            LLVM_IAS=1 \
-            ARCH=arm64 \
+            LLVM=1 LLVM_IAS=1 ARCH=arm64 \
             CROSS_COMPILE=aarch64-linux-gnu- \
-            CC="ccache clang" \
-            PAHOLE=pahole \
-            LD=ld.lld \
-            HOSTLD=ld.lld \
-            KCFLAGS+=-O2 \
-            KCFLAGS+=-Wno-error \
+            CC="ccache clang" PAHOLE=pahole \
+            LD=ld.lld HOSTLD=ld.lld \
+            KCFLAGS+=-O2 KCFLAGS+=-Wno-error \
             O=out all
 
           git restore . || true
           git clean -fd || true
+
+          echo "=== CCache 统计 ==="
           ccache -s
 
       - name: Make AnyKernel3
@@ -250,33 +264,22 @@ jobs:
           git clone https://github.com/Kernel-SU/AnyKernel3.git --depth=1
           cp kernel_workspace/kernel_platform/common/out/arch/arm64/boot/Image ./AnyKernel3/
 
-      - name: Upload AnyKernel3
+      # ✅ 新增：定义统一的包名变量，后续步骤复用，避免拼写不一致
+      - name: Set artifact name
+        id: naming
+        run: |
+          NAME="PKX110_AnyKernel3_NoKSU"
+          [ "${{ inputs.Apply_SCHED }}"    = "true" ] && NAME="${NAME}_sched"
+          [ "${{ inputs.better_net }}"     = "true" ] && NAME="${NAME}_ipt"
+          [ "${{ inputs.baseband_guard }}" = "true" ] && NAME="${NAME}_bbg"
+          [ "${{ inputs.adocker }}"        = "true" ] && NAME="${NAME}_docker"
+          echo "name=${NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload AnyKernel3 Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: PKX110_AnyKernel3_NoKSU${{ inputs.Apply_SCHED && '_sched' || '' }}${{ inputs.better_net && '_ipt' || '' }}${{ inputs.baseband_guard && '_bbg' || '' }}${{ inputs.adocker && '_docker' || '' }}
+          name: ${{ steps.naming.outputs.name }}
           path: ./AnyKernel3/*
-
-      - name: Zip AnyKernel3 for Release
-        run: |
-          ZIP_NAME="AnyKernel3_OnePlus13T_NoKSU${{ inputs.Apply_SCHED && '_sched' || '' }}${{ inputs.better_net && '_ipt' || '' }}${{ inputs.baseband_guard && '_bbg' || '' }}${{ inputs.adocker && '_docker' || '' }}.zip"
-          cd AnyKernel3
-          zip -r9 "../$ZIP_NAME" * -x .git README.md *placeholder
-          echo "ZIP_FILE=$ZIP_NAME" >> $GITHUB_ENV
-
-      - name: Create Release and Upload
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: Build-${{ github.run_id }}
-          name: OnePlus 13T Kernel Build - ${{ github.run_id }}
-          files: ${{ env.ZIP_FILE }}
-          body: |
-            自动编译构建的 OnePlus 13T 内核。
-            调度(Apply_SCHED): ${{ inputs.Apply_SCHED }}
-            网络增强(better_net): ${{ inputs.better_net }}
-            基带保护(baseband_guard): ${{ inputs.baseband_guard }}
-            Docker支持(adocker): ${{ inputs.adocker }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Extract All Kernel Modules
         run: |
@@ -290,6 +293,37 @@ jobs:
         with:
           name: kernel-modules
           path: ./all_modules/
+
+      # ✅ 新增：打包 AnyKernel3 为 zip 并推送到 GitHub Release
+      - name: Package AnyKernel3 zip
+        run: |
+          ZIP_NAME="${{ steps.naming.outputs.name }}.zip"
+          cd AnyKernel3
+          zip -r9 "../${ZIP_NAME}" ./*
+          cd ..
+          echo "ZIP_NAME=${ZIP_NAME}" >> "$GITHUB_ENV"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          # tag 格式：日期 + run 编号，保证每次构建有唯一 Release
+          tag_name: build-${{ github.run_number }}-${{ github.run_id }}
+          name: "OnePlus 13T Kernel | Build #${{ github.run_number }}"
+          body: |
+            ## OnePlus 13T Kernel (NoKSU) — Build #${{ github.run_number }}
+
+            | 选项 | 状态 |
+            |------|------|
+            | 风驰调度 (SCHED)   | ${{ inputs.Apply_SCHED    && '✅ 启用' || '❌ 禁用' }} |
+            | 网络增强 + nftables | ${{ inputs.better_net     && '✅ 启用' || '❌ 禁用' }} |
+            | 基带保护 (BBG)     | ${{ inputs.baseband_guard && '✅ 启用' || '❌ 禁用' }} |
+            | Docker 支持        | ${{ inputs.adocker        && '✅ 启用' || '❌ 禁用' }} |
+
+            通过 AnyKernel3 刷入，无需 Root。
+          files: ${{ env.ZIP_NAME }}
+          # 同一 tag 若已存在则覆盖，避免手动删除 Release
+          prerelease: false
+          make_latest: true
 
       - name: Force Save Ccache
         uses: actions/cache/save@v4
