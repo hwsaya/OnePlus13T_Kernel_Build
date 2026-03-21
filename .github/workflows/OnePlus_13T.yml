@@ -8,11 +8,6 @@ on:
         required: false
         type: boolean
         default: false
-      Apply_SCHED:
-        description: "是否添加风驰驱动"
-        required: false
-        type: boolean
-        default: false
       better_net:
         description: "是否开启网络功能增强配置"
         required: false
@@ -169,22 +164,6 @@ jobs:
           cp src/libfaketimeMT.so.1 ${{ github.workspace }}/libfaketimeMT.so
           echo "✅ libfaketime 编译完成"
           ls -lh ${{ github.workspace }}/libfakestat.so ${{ github.workspace }}/libfaketimeMT.so
-
-      - name: Apply Convert HMBIRD_OGKI to HMBIRD_GKI
-        if: ${{ !inputs.Apply_SCHED }}
-        run: |
-          cp hmbird_patch.c kernel_workspace/common/drivers/
-          cd kernel_workspace/common/drivers
-          if ! grep -q "hmbird_patch.o" Makefile; then
-            echo "obj-y += hmbird_patch.o" >> Makefile
-          fi
-
-      - name: Apply SCHED
-        if: ${{ inputs.Apply_SCHED }}
-        run: |
-          git clone https://github.com/Numbersf/SCHED_PATCH.git -b sm8750
-          dos2unix SCHED_PATCH/fengchi_oneplus_13t_b.patch
-          patch -d kernel_workspace/common -p1 -F 3 < SCHED_PATCH/fengchi_oneplus_13t_b.patch || true
 
       - name: Add iptables extensions
         if: ${{ inputs.better_net }}
@@ -351,7 +330,7 @@ jobs:
           fi
           cd AnyKernel3
           rm -rf .git
-          AK3_NAME="AnyKernel3_OnePlus13T${{ inputs.Apply_SCHED && '_sched' || '' }}${{ inputs.better_net && '_ipt' || '' }}${{ inputs.nftables && '_nft' || '' }}${{ inputs.rekernel && '_rekernel' || '' }}${{ inputs.baseband_guard && '_bbg' || '' }}${{ inputs.adocker && '_docker' || '' }}_$(date +%Y%m%d).zip"
+          AK3_NAME="AnyKernel3_OnePlus13T${{ inputs.better_net && '_ipt' || '' }}${{ inputs.nftables && '_nft' || '' }}${{ inputs.rekernel && '_rekernel' || '' }}${{ inputs.baseband_guard && '_bbg' || '' }}${{ inputs.adocker && '_docker' || '' }}_$(date +%Y%m%d).zip"
           zip -r "../$AK3_NAME" ./*
           echo "AK3_NAME=$AK3_NAME" >> $GITHUB_ENV
           cd ..
@@ -374,13 +353,12 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: kernel-${{ github.run_number }}-${{ github.run_attempt }}
-          name: "OnePlus 13T Kernel #${{ github.run_number }}${{ inputs.Apply_SCHED && ' +sched' || '' }}${{ inputs.better_net && ' +ipt' || '' }}${{ inputs.nftables && ' +nft' || '' }}${{ inputs.rekernel && ' +rekernel' || '' }}${{ inputs.baseband_guard && ' +bbg' || '' }}${{ inputs.adocker && ' +docker' || '' }}"
+          name: "OnePlus 13T Kernel #${{ github.run_number }}${{ inputs.better_net && ' +ipt' || '' }}${{ inputs.nftables && ' +nft' || '' }}${{ inputs.rekernel && ' +rekernel' || '' }}${{ inputs.baseband_guard && ' +bbg' || '' }}${{ inputs.adocker && ' +docker' || '' }}"
           body: |
             ## OnePlus 13T Kernel Build
 
             | 选项 | 状态 |
             |---|---|
-            | 风驰调度 | ${{ inputs.Apply_SCHED && '✅' || '❌' }} |
             | 网络增强 (ipset) | ${{ inputs.better_net && '✅' || '❌' }} |
             | nftables | ${{ inputs.nftables && '✅' || '❌' }} |
             | Re-Kernel | ${{ inputs.rekernel && '✅' || '❌' }} |
