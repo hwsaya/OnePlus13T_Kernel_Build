@@ -131,7 +131,7 @@ jobs:
         run: |
           mkdir -p kernel_workspace
           echo "=== 下载内核源码 ==="
-          aria2c -s16 -x16 -k1M \
+          aria2c -s4 -x4 -k1M --retry-wait=3 --max-tries=5 \
             https://github.com/${{ env.KERNEL_REPO }}/archive/refs/heads/${{ env.KERNEL_BRANCH }}.zip \
             -o common.zip
           unzip -q common.zip
@@ -151,10 +151,10 @@ jobs:
         run: |
           mkdir -p kernel_workspace
           echo "=== 下载 Clang18 工具链 ==="
-          aria2c -s16 -x16 -k1M \
+          aria2c -s4 -x4 -k1M --retry-wait=3 --max-tries=5 \
             https://github.com/${{ env.TOOLCHAIN_REPO }}/releases/download/${{ env.TOOLCHAIN_TAG }}/${{ env.CLANG_ZIP }} \
             -o clang.zip &
-          aria2c -s16 -x16 -k1M \
+          aria2c -s4 -x4 -k1M --retry-wait=3 --max-tries=5 \
             https://github.com/${{ env.TOOLCHAIN_REPO }}/releases/download/${{ env.TOOLCHAIN_TAG }}/${{ env.BUILDTOOLS_ZIP }} \
             -o build-tools.zip &
           wait
@@ -316,26 +316,6 @@ jobs:
           FAKESTAT="2025-05-25 12:00:00"
           FAKETIME="@2025-05-25 13:00:00"
 
-          # 创建 CC 包装器（仅用于 kernel 对象编译，不用于 host 工具）
-          cat > "$WORKDIR/cc-wrapper" << WRAPPER
-          #!/bin/bash
-          export LD_PRELOAD="$PRELOAD_LIBS"
-          export FAKESTAT="$FAKESTAT"
-          export FAKETIME="$FAKETIME"
-          exec ccache clang "\$@"
-          WRAPPER
-
-          # 创建 LD 包装器
-          cat > "$WORKDIR/ld-wrapper" << WRAPPER
-          #!/bin/bash
-          export LD_PRELOAD="$PRELOAD_LIBS"
-          export FAKESTAT="$FAKESTAT"
-          export FAKETIME="$FAKETIME"
-          exec ld.lld "\$@"
-          WRAPPER
-
-          chmod +x "$WORKDIR/cc-wrapper" "$WORKDIR/ld-wrapper"
-
           # 后台清理不必要的大文件
           sudo rm -rf /usr/share/dotnet &
           sudo rm -rf /usr/local/lib/android &
@@ -354,12 +334,15 @@ jobs:
             KCFLAGS+=-Wno-error \
             O=out gki_defconfig
 
-          # 第二步：用 cc-wrapper 注入时间劫持编译 Image
+          # 第二步：通过环境变量注入时间劫持编译 Image（不用包装器，避免 kconfig 误用）
+          LD_PRELOAD="$PRELOAD_LIBS" \
+          FAKESTAT="$FAKESTAT" \
+          FAKETIME="$FAKETIME" \
           make -j$(nproc --all) \
             LLVM=1 LLVM_IAS=1 ARCH=arm64 \
             CROSS_COMPILE=aarch64-linux-gnu- \
-            CC="$WORKDIR/cc-wrapper" \
-            LD="$WORKDIR/ld-wrapper" \
+            CC="ccache clang" \
+            LD=ld.lld \
             HOSTCC="ccache clang" \
             HOSTLD=ld.lld \
             PAHOLE=pahole \
