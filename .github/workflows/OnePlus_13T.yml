@@ -14,7 +14,7 @@ on:
         type: boolean
         default: false
       better_net:
-        description: "是否开启 ipset 支持"
+        description: "是否开启网络功能增强配置"
         required: false
         type: boolean
         default: false
@@ -38,6 +38,15 @@ on:
         required: false
         type: boolean
         default: false
+
+env:
+  KERNEL_REPO: cctv18/android_kernel_common_oneplus_sm8750
+  KERNEL_BRANCH: oneplus/sm8750_v_16.0.0_oneplus_13_6.6.89
+  TOOLCHAIN_REPO: cctv18/oneplus_sm8650_toolchain
+  TOOLCHAIN_TAG: LLVM-Clang18-r510928
+  CLANG_ZIP: clang-r510928.zip
+  BUILDTOOLS_ZIP: build-tools.zip
+
 jobs:
   build:
     name: OnePlus 13T Kernel Build
@@ -60,67 +69,32 @@ jobs:
           sudo apt purge man-db -y
           sudo apt-get install -y --no-install-recommends \
             libelf-dev tree dos2unix ccache lld pahole \
-            libssl-dev binutils python-is-python3
-
-      - name: Cache Prebuilts
-        id: prebuilts-cache
-        uses: actions/cache@v4
-        with:
-          path: kernel_workspace/kernel_platform/prebuilts
-          key: prebuilts-${{ runner.os }}-sm8750-v2
+            libssl-dev binutils python-is-python3 aria2
 
       - name: Cache Kernel Source
         id: kernel-src-cache
         uses: actions/cache@v4
         with:
-          path: kernel_workspace/kernel_platform/common
-          key: kernel-src-${{ runner.os }}-sm8750
+          path: kernel_workspace/common
+          key: kernel-src-${{ runner.os }}-${{ env.KERNEL_BRANCH }}
+
+      - name: Cache Toolchain
+        id: toolchain-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            kernel_workspace/clang18
+            kernel_workspace/build-tools
+          key: toolchain-${{ runner.os }}-${{ env.TOOLCHAIN_TAG }}
 
       - name: Cache ccache
         id: ccache-cache
         uses: actions/cache@v4
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-${{ runner.os }}-oneplus-13t-noksu-v2-${{ github.run_number }}
+          key: ccache-${{ runner.os }}-oneplus-13t-v1-${{ github.run_number }}
           restore-keys: |
-            ccache-${{ runner.os }}-oneplus-13t-noksu-v2
-
-      - name: Configure Git and repo
-        run: |
-          git config --global user.email "action@github.com"
-          git config --global user.name "GitHub Action"
-          curl https://storage.googleapis.com/git-repo-downloads/repo > ~/repo
-          chmod a+x ~/repo
-          sudo mv ~/repo /usr/local/bin/repo
-
-      - name: Initialize repo and sync
-        run: |
-          mkdir -p kernel_workspace && cd kernel_workspace
-          repo init -u https://github.com/OnePlusOSS/kernel_manifest.git \
-            -b refs/heads/oneplus/sm8750 -m oneplus_13t_b.xml --depth=1
-
-          if [ "${{ steps.kernel-src-cache.outputs.cache-hit }}" != "true" ] || [ "${{ inputs.pull_kernel_src }}" = "true" ]; then
-            echo "=== Syncing Kernel Source ==="
-            rm -rf kernel_platform/common
-            repo sync kernel_platform/common \
-              -c --force-sync --no-tags --no-clone-bundle \
-              -j$(nproc --all)
-          else
-            echo "=== Cache Hit: Skipping Kernel Source Sync ==="
-          fi
-
-          if [ "${{ steps.prebuilts-cache.outputs.cache-hit }}" != "true" ] || [ "${{ inputs.pull_kernel_src }}" = "true" ]; then
-            echo "=== Syncing Prebuilts ==="
-            rm -rf kernel_platform/prebuilts
-            repo sync kernel_platform/prebuilts/clang/host/linux-x86 \
-                      kernel_platform/prebuilts/kernel-build-tools \
-              -c --force-sync --no-tags --no-clone-bundle \
-              -j$(nproc --all)
-          else
-            echo "=== Cache Hit: Skipping Prebuilts Sync ==="
-          fi
-
-          rm kernel_platform/common/android/abi_gki_protected_exports_* || echo "No protected exports!"
+            ccache-${{ runner.os }}-oneplus-13t-v1
 
       - name: Cache libfaketime
         id: libfaketime-cache
@@ -130,6 +104,43 @@ jobs:
             ${{ github.workspace }}/libfakestat.so
             ${{ github.workspace }}/libfaketimeMT.so
           key: libfaketime-${{ runner.os }}-v1
+
+      - name: Download kernel source
+        if: ${{ steps.kernel-src-cache.outputs.cache-hit != 'true' || inputs.pull_kernel_src }}
+        run: |
+          mkdir -p kernel_workspace
+          echo "=== 下载内核源码 ==="
+          aria2c -s16 -x16 -k1M \
+            https://github.com/${{ env.KERNEL_REPO }}/archive/refs/heads/${{ env.KERNEL_BRANCH }}.zip \
+            -o common.zip
+          unzip -q common.zip
+          # 移动到正确目录
+          SRC_DIR=$(find . -maxdepth 1 -type d -name "android_kernel_common_oneplus_sm8750-*" | head -1)
+          mv "$SRC_DIR" kernel_workspace/common
+          rm common.zip
+          # 去除 ABI 保护 & dirty 后缀
+          rm kernel_workspace/common/android/abi_gki_protected_exports_* || true
+          for f in kernel_workspace/common/scripts/setlocalversion; do
+            sed -i 's/ -dirty//g' "$f"
+            sed -i '$i res=$(echo "$res" | sed '\''s/-dirty//g'\'')' "$f"
+          done
+
+      - name: Download toolchain
+        if: ${{ steps.toolchain-cache.outputs.cache-hit != 'true' || inputs.pull_kernel_src }}
+        run: |
+          mkdir -p kernel_workspace
+          echo "=== 下载 Clang18 工具链 ==="
+          aria2c -s16 -x16 -k1M \
+            https://github.com/${{ env.TOOLCHAIN_REPO }}/releases/download/${{ env.TOOLCHAIN_TAG }}/${{ env.CLANG_ZIP }} \
+            -o clang.zip &
+          aria2c -s16 -x16 -k1M \
+            https://github.com/${{ env.TOOLCHAIN_REPO }}/releases/download/${{ env.TOOLCHAIN_TAG }}/${{ env.BUILDTOOLS_ZIP }} \
+            -o build-tools.zip &
+          wait
+          mkdir -p kernel_workspace/clang18
+          unzip -q clang.zip -d kernel_workspace/clang18
+          unzip -q build-tools.zip -d kernel_workspace
+          rm clang.zip build-tools.zip
 
       - name: Build libfaketime
         if: ${{ steps.libfaketime-cache.outputs.cache-hit != 'true' }}
@@ -146,8 +157,8 @@ jobs:
       - name: Apply Convert HMBIRD_OGKI to HMBIRD_GKI
         if: ${{ !inputs.Apply_SCHED }}
         run: |
-          cp hmbird_patch.c kernel_workspace/kernel_platform/common/drivers/
-          cd kernel_workspace/kernel_platform/common/drivers
+          cp hmbird_patch.c kernel_workspace/common/drivers/
+          cd kernel_workspace/common/drivers
           if ! grep -q "hmbird_patch.o" Makefile; then
             echo "obj-y += hmbird_patch.o" >> Makefile
           fi
@@ -157,12 +168,12 @@ jobs:
         run: |
           git clone https://github.com/Numbersf/SCHED_PATCH.git -b sm8750
           dos2unix SCHED_PATCH/fengchi_oneplus_13t_b.patch
-          patch -d kernel_workspace/kernel_platform/common -p1 -F 3 < SCHED_PATCH/fengchi_oneplus_13t_b.patch
+          patch -d kernel_workspace/common -p1 -F 3 < SCHED_PATCH/fengchi_oneplus_13t_b.patch
 
       - name: Add iptables extensions
         if: ${{ inputs.better_net }}
         run: |
-          cd kernel_workspace/kernel_platform/common
+          cd kernel_workspace/common
           {
             echo "CONFIG_BPF_STREAM_PARSER=y"
             echo "CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y"
@@ -192,7 +203,7 @@ jobs:
       - name: Add nftables support
         if: ${{ inputs.nftables }}
         run: |
-          cd kernel_workspace/kernel_platform/common
+          cd kernel_workspace/common
           sed -i '/# CONFIG_NF_TABLES is not set/d' ./arch/arm64/configs/gki_defconfig
           {
             echo "# nftables full support"
@@ -225,13 +236,12 @@ jobs:
       - name: Add Re-Kernel support
         if: ${{ inputs.rekernel }}
         run: |
-          cd kernel_workspace/kernel_platform/common
-          echo "CONFIG_REKERNEL=y" >> ./arch/arm64/configs/gki_defconfig
+          echo "CONFIG_REKERNEL=y" >> kernel_workspace/common/arch/arm64/configs/gki_defconfig
 
       - name: Setup Baseband-guard
         if: ${{ inputs.baseband_guard }}
         run: |
-          cd kernel_workspace/kernel_platform/common
+          cd kernel_workspace/common
           curl -LSs "https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh" | bash
           echo "CONFIG_BBG=y" >> ./arch/arm64/configs/gki_defconfig
           sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/lockdown/lockdown,baseband_guard/ } }' security/Kconfig
@@ -239,43 +249,32 @@ jobs:
       - name: Setup Docker
         if: ${{ inputs.adocker }}
         run: |
-          cp -rf docker kernel_workspace/kernel_platform/common/
-          cd kernel_workspace/kernel_platform/common/
+          cp -rf docker kernel_workspace/common/
+          cd kernel_workspace/common/
           sed -i "/endmenu/i\source \"docker/Kconfig\"" ./arch/arm64/Kconfig
           echo "CONFIG_DOCKER=y" >> ./arch/arm64/configs/gki_defconfig
 
       - name: Other tasks
         run: |
-          cd kernel_workspace/kernel_platform/common
+          cd kernel_workspace/common
           echo "CONFIG_HEADERS_INSTALL=n" >> ./arch/arm64/configs/gki_defconfig
           echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> ./arch/arm64/configs/gki_defconfig
           sed -i 's/check_defconfig//' ./build.config.gki
 
       - name: Rename make name
         run: |
-          cd kernel_workspace/kernel_platform/common
+          cd kernel_workspace/common
           sed -i 's/${scm_version}//' ./scripts/setlocalversion
           sed -i 's/-4k//g' ./arch/arm64/configs/gki_defconfig
 
       - name: Build Kernel
         run: |
-          cd kernel_workspace/kernel_platform/common
+          cd kernel_workspace/common
 
-          echo "=== Setting up Build Environment ==="
-
-          PREBUILTS_ROOT="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/prebuilts"
-          CLANG_ROOT="$PREBUILTS_ROOT/clang/host/linux-x86"
-
-          CLANG_DIR=$(find "$CLANG_ROOT" -maxdepth 1 -type d -name "clang-r*" | sort -r | head -n 1)
-
-          if [ -z "$CLANG_DIR" ]; then
-            echo "❌ Error: 无法找到 Clang 目录！"
-            ls -al "$CLANG_ROOT" || echo "Root dir missing"
-            exit 1
-          fi
-
-          echo "✅ 自动检测到 Clang 目录: $CLANG_DIR"
-          export PATH="$CLANG_DIR/bin:$PREBUILTS_ROOT/kernel-build-tools/linux-x86/bin:$PATH"
+          WORKDIR="$(pwd)"
+          CLANG_DIR="$GITHUB_WORKSPACE/kernel_workspace/clang18/bin"
+          BUILDTOOLS_DIR="$GITHUB_WORKSPACE/kernel_workspace/build-tools/bin"
+          export PATH="$CLANG_DIR:$BUILDTOOLS_DIR:$PATH"
 
           echo "Using Compiler: $(clang --version | head -1)"
 
@@ -284,48 +283,48 @@ jobs:
             exit 1
           fi
 
-          # 配置 ccache sloppiness（放宽缓存匹配条件，提升命中率）
+          # 配置 ccache
           mkdir -p "${{ env.CCACHE_DIR }}"
           ccache -M "${{ env.CCACHE_MAXSIZE }}"
           ccache -o compression=true
           echo "sloppiness = file_stat_matches,include_file_ctime,include_file_mtime,pch_defines,file_macro,time_macros" >> "${{ env.CCACHE_DIR }}/ccache.conf"
           ccache -z
 
-          # 配置时间劫持（让 ccache 认为源文件未变化，强制命中缓存）
+          # 配置时间劫持变量
           PRELOAD_LIBS="${{ github.workspace }}/libfakestat.so ${{ github.workspace }}/libfaketimeMT.so"
           FAKESTAT="2025-05-25 12:00:00"
           FAKETIME="@2025-05-25 13:00:00"
 
-          # 创建 CC 包装器
-          cat > cc-wrapper << EOF
+          # 创建 CC 包装器（仅用于 kernel 对象编译，不用于 host 工具）
+          cat > "$WORKDIR/cc-wrapper" << WRAPPER
           #!/bin/bash
           export LD_PRELOAD="$PRELOAD_LIBS"
           export FAKESTAT="$FAKESTAT"
           export FAKETIME="$FAKETIME"
           exec ccache clang "\$@"
-          EOF
+          WRAPPER
 
           # 创建 LD 包装器
-          cat > ld-wrapper << EOF
+          cat > "$WORKDIR/ld-wrapper" << WRAPPER
           #!/bin/bash
           export LD_PRELOAD="$PRELOAD_LIBS"
           export FAKESTAT="$FAKESTAT"
           export FAKETIME="$FAKETIME"
           exec ld.lld "\$@"
-          EOF
+          WRAPPER
 
-          chmod +x cc-wrapper ld-wrapper
+          chmod +x "$WORKDIR/cc-wrapper" "$WORKDIR/ld-wrapper"
 
-          # 后台清理不必要的大文件，释放磁盘空间
+          # 后台清理不必要的大文件
           sudo rm -rf /usr/share/dotnet &
           sudo rm -rf /usr/local/lib/android &
           sudo rm -rf /opt/ghc &
           sudo rm -rf /opt/hostedtoolcache/CodeQL &
 
           echo "=== 开始编译 ==="
-          echo "当前磁盘空间："
           df -h
 
+          # 第一步：用系统 clang 生成 .config（避免 cc-wrapper 干扰 kconfig host 工具）
           make -j$(nproc --all) \
             LLVM=1 LLVM_IAS=1 ARCH=arm64 \
             CROSS_COMPILE=aarch64-linux-gnu- \
@@ -334,18 +333,17 @@ jobs:
             KCFLAGS+=-Wno-error \
             O=out gki_defconfig
 
+          # 第二步：用 cc-wrapper 注入时间劫持编译 Image
           make -j$(nproc --all) \
             LLVM=1 LLVM_IAS=1 ARCH=arm64 \
             CROSS_COMPILE=aarch64-linux-gnu- \
-            CC="$(pwd)/cc-wrapper" \
-            LD="$(pwd)/ld-wrapper" \
+            CC="$WORKDIR/cc-wrapper" \
+            LD="$WORKDIR/ld-wrapper" \
+            HOSTCC="ccache clang" \
             HOSTLD=ld.lld \
             PAHOLE=pahole \
             KCFLAGS+=-Wno-error \
-            O=out all
-
-          git restore . || true
-          git clean -fd || true
+            O=out Image
 
           echo "=== CCache 统计 ==="
           ccache -s
@@ -355,13 +353,17 @@ jobs:
       - name: Make AnyKernel3
         run: |
           git clone https://github.com/Kernel-SU/AnyKernel3.git --depth=1
-          cp kernel_workspace/kernel_platform/common/out/arch/arm64/boot/Image ./AnyKernel3/
+          cp kernel_workspace/common/out/arch/arm64/boot/Image ./AnyKernel3/
+          if [[ ! -f ./AnyKernel3/Image ]]; then
+            echo "❌ 未找到内核镜像文件"
+            exit 1
+          fi
 
       - name: Extract All Kernel Modules
         run: |
           mkdir -p ./all_modules
-          tree kernel_workspace/kernel_platform/common/out/ > ./all_modules/tree.txt || true
-          cd kernel_workspace/kernel_platform/common/out/
+          tree kernel_workspace/common/out/ > ./all_modules/tree.txt || true
+          cd kernel_workspace/common/out/
           find . -name "*.ko" -exec cp --parents {} ../../../../all_modules/ \;
 
       - name: Upload Modules Artifact
@@ -381,7 +383,7 @@ jobs:
             | 选项 | 状态 |
             |---|---|
             | 风驰调度 | ${{ inputs.Apply_SCHED && '✅' || '❌' }} |
-            | ipset | ${{ inputs.better_net && '✅' || '❌' }} |
+            | 网络增强 (ipset) | ${{ inputs.better_net && '✅' || '❌' }} |
             | nftables | ${{ inputs.nftables && '✅' || '❌' }} |
             | Re-Kernel | ${{ inputs.rekernel && '✅' || '❌' }} |
             | 基带保护 | ${{ inputs.baseband_guard && '✅' || '❌' }} |
@@ -394,4 +396,4 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-${{ runner.os }}-oneplus-13t-noksu-v2-${{ github.run_id }}
+          key: ccache-${{ runner.os }}-oneplus-13t-v1-${{ github.run_id }}
