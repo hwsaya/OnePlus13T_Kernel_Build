@@ -69,7 +69,7 @@ jobs:
           sudo apt purge man-db -y
           sudo apt-get install -y --no-install-recommends \
             libelf-dev tree dos2unix ccache lld pahole \
-            libssl-dev binutils python-is-python3 aria2
+            libssl-dev binutils python-is-python3 aria2 zstd
 
       - name: Cache Kernel Source
         id: kernel-src-cache
@@ -95,6 +95,27 @@ jobs:
           key: ccache-${{ runner.os }}-oneplus-13t-v1-${{ github.run_number }}
           restore-keys: |
             ccache-${{ runner.os }}-oneplus-13t-v1
+
+
+      - name: Pull public ccache fallback
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -d "${{ env.CCACHE_DIR }}" ] && [ "$(ls -A ${{ env.CCACHE_DIR }} 2>/dev/null)" ]; then
+            echo "本地 ccache 命中，跳过公共 ccache 拉取"
+            exit 0
+          fi
+          echo "未命中本地缓存，尝试拉取公共 ccache..."
+          mkdir -p ${{ env.CCACHE_DIR }}
+          FILE_NAME="ccache-6.6.89.tar.zst"
+          if gh release download -p "$FILE_NAME" -R cctv18/public_ccache 2>/dev/null; then
+            echo "成功下载 $FILE_NAME，正在解压..."
+            tar -I zstd -xf "$FILE_NAME" -C ${{ env.CCACHE_DIR }}
+            rm -f "$FILE_NAME"
+            echo "公共 ccache 恢复完成"
+          else
+            echo "公共 ccache 中未找到对应文件，将进行全量编译"
+          fi
 
       - name: Cache libfaketime
         id: libfaketime-cache
@@ -168,7 +189,7 @@ jobs:
         run: |
           git clone https://github.com/Numbersf/SCHED_PATCH.git -b sm8750
           dos2unix SCHED_PATCH/fengchi_oneplus_13t_b.patch
-          patch -d kernel_workspace/common -p1 -F 3 < SCHED_PATCH/fengchi_oneplus_13t_b.patch
+          patch -d kernel_workspace/common -p1 -F 3 < SCHED_PATCH/fengchi_oneplus_13t_b.patch || true
 
       - name: Add iptables extensions
         if: ${{ inputs.better_net }}
