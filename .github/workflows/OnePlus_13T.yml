@@ -18,6 +18,11 @@ on:
         required: false
         type: boolean
         default: false
+      nftables:
+        description: "是否开启 nftables 支持"
+        required: false
+        type: boolean
+        default: false
       baseband_guard:
         description: "是否开启内核级基带保护"
         required: false
@@ -48,8 +53,6 @@ jobs:
         run: |
           sudo apt-get install -y --no-install-recommends libelf-dev tree dos2unix ccache lld pahole
 
-      # 【恢复】缓存编译器和构建工具 (Prebuilts)
-      # 使用 v2 后缀，确保不读取旧的损坏缓存
       - name: Cache Prebuilts
         id: prebuilts-cache
         uses: actions/cache@v4
@@ -57,7 +60,6 @@ jobs:
           path: kernel_workspace/kernel_platform/prebuilts
           key: prebuilts-${{ runner.os }}-sm8750-v2
 
-      # 【保持】CCache 缓存
       - name: Cache ccache
         id: ccache-cache
         uses: actions/cache@v4
@@ -81,18 +83,15 @@ jobs:
           repo init -u https://github.com/OnePlusOSS/kernel_manifest.git \
             -b refs/heads/oneplus/sm8750 -m oneplus_13t_b.xml --depth=1
 
-          # 1. 始终清理并重新同步内核源码 (common)，避免 HEAD 错误
           rm -rf kernel_platform/common
           echo "=== Syncing Kernel Source ==="
           repo sync kernel_platform/common \
             -c --force-sync --no-tags --no-clone-bundle \
             -j$(nproc --all)
 
-          # 2. 智能同步 Prebuilts
-          # 如果缓存未命中(cache-hit != true) 或者用户强制拉取，则同步
           if [ "${{ steps.prebuilts-cache.outputs.cache-hit }}" != "true" ] || [ "${{ inputs.pull_kernel_src }}" = "true" ]; then
             echo "=== Cache Miss or Force Pull: Syncing Prebuilts ==="
-            rm -rf kernel_platform/prebuilts # 清理可能残留的空目录
+            rm -rf kernel_platform/prebuilts
             repo sync kernel_platform/prebuilts/clang/host/linux-x86 \
                       kernel_platform/prebuilts/kernel-build-tools \
               -c --force-sync --no-tags --no-clone-bundle \
@@ -149,6 +148,40 @@ jobs:
             echo "CONFIG_IP6_NF_TARGET_MASQUERADE=y"
           } >> ./arch/arm64/configs/gki_defconfig
 
+      - name: Add nftables support
+        if: ${{ inputs.nftables }}
+        run: |
+          cd kernel_workspace/kernel_platform/common
+          # 移除禁用行
+          sed -i '/# CONFIG_NF_TABLES is not set/d' ./arch/arm64/configs/gki_defconfig
+          {
+            echo "# nftables full support"
+            echo "CONFIG_NF_TABLES=y"
+            echo "CONFIG_NF_TABLES_INET=y"
+            echo "CONFIG_NF_TABLES_IPV4=y"
+            echo "CONFIG_NF_TABLES_IPV6=y"
+            echo "CONFIG_NF_TABLES_ARP=y"
+            echo "CONFIG_NFT_TPROXY=y"
+            echo "CONFIG_NFT_SOCKET=y"
+            echo "CONFIG_NFT_CT=y"
+            echo "CONFIG_NFT_META=y"
+            echo "CONFIG_NFT_FIB=y"
+            echo "CONFIG_NFT_FIB_IPV4=y"
+            echo "CONFIG_NFT_FIB_IPV6=y"
+            echo "CONFIG_NFT_FIB_INET=y"
+            echo "CONFIG_NFT_SET_HASH=y"
+            echo "CONFIG_NFT_SET_RBTREE=y"
+            echo "CONFIG_NFT_SET_BITMAP=y"
+            echo "CONFIG_NFT_NAT=y"
+            echo "CONFIG_NFT_REDIR=y"
+            echo "CONFIG_NFT_LOG=y"
+            echo "CONFIG_NFT_LIMIT=y"
+            echo "CONFIG_NFT_REJECT=y"
+            echo "CONFIG_NFT_REJECT_IPV4=y"
+            echo "CONFIG_NFT_REJECT_IPV6=y"
+            echo "CONFIG_NFT_COMPAT=y"
+          } >> ./arch/arm64/configs/gki_defconfig
+
       - name: Setup Baseband-guard
         if: ${{ inputs.baseband_guard }}
         run: |
@@ -184,11 +217,9 @@ jobs:
           
           echo "=== Setting up Build Environment ==="
           
-          # 使用绝对路径定位 prebuilts
           PREBUILTS_ROOT="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/prebuilts"
           CLANG_ROOT="$PREBUILTS_ROOT/clang/host/linux-x86"
           
-          # 即使有缓存，也必须动态查找 Clang 版本目录名
           CLANG_DIR=$(find "$CLANG_ROOT" -maxdepth 1 -type d -name "clang-r*" | sort -r | head -n 1)
           
           if [ -z "$CLANG_DIR" ]; then
@@ -203,7 +234,6 @@ jobs:
           
           export PATH="$CLANG_DIR/bin:$PREBUILTS_ROOT/kernel-build-tools/linux-x86/bin:$PATH"
           
-          # 验证环境
           echo "Using Compiler:"
           clang --version
           
@@ -256,7 +286,7 @@ jobs:
       - name: Upload AnyKernel3
         uses: actions/upload-artifact@v4
         with:
-          name: PKX110_AnyKernel3_NoKSU${{ inputs.Apply_SCHED && '_sched' || '' }}${{ inputs.better_net && '_ipt' || '' }}${{ inputs.baseband_guard && '_bbg' || '' }}${{ inputs.adocker && '_docker' || '' }}
+          name: PKX110_AnyKernel3_NoKSU${{ inputs.Apply_SCHED && '_sched' || '' }}${{ inputs.better_net && '_ipt' || '' }}${{ inputs.nftables && '_nft' || '' }}${{ inputs.baseband_guard && '_bbg' || '' }}${{ inputs.adocker && '_docker' || '' }}
           path: ./AnyKernel3/*
 
       - name: Extract All Kernel Modules
