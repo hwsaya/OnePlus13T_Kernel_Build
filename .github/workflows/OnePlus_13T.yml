@@ -349,6 +349,13 @@ jobs:
             echo "❌ 未找到内核镜像文件"
             exit 1
           fi
+          cd AnyKernel3
+          rm -rf .git
+          AK3_NAME="AnyKernel3_OnePlus13T${{ inputs.Apply_SCHED && '_sched' || '' }}${{ inputs.better_net && '_ipt' || '' }}${{ inputs.nftables && '_nft' || '' }}${{ inputs.rekernel && '_rekernel' || '' }}${{ inputs.baseband_guard && '_bbg' || '' }}${{ inputs.adocker && '_docker' || '' }}_$(date +%Y%m%d).zip"
+          zip -r "../$AK3_NAME" ./*
+          echo "AK3_NAME=$AK3_NAME" >> $GITHUB_ENV
+          cd ..
+          echo "✅ 打包完成：$AK3_NAME"
 
       - name: Extract All Kernel Modules
         run: |
@@ -379,7 +386,7 @@ jobs:
             | Re-Kernel | ${{ inputs.rekernel && '✅' || '❌' }} |
             | 基带保护 | ${{ inputs.baseband_guard && '✅' || '❌' }} |
             | Docker | ${{ inputs.adocker && '✅' || '❌' }} |
-          files: ./AnyKernel3/*
+          files: ./${{ env.AK3_NAME }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Force Save Ccache
