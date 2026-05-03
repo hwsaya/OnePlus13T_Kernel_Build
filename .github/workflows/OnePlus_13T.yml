@@ -7,7 +7,7 @@ on:
         description: "KernelSU 版本 (latest、分支名、Tag 或 commit hash)，留空则不集成"
         required: false
         type: string
-        default: ""
+        default: "latest"
       pull_kernel_src:
         description: "是否拉取远程内核源码(否则使用缓存)"
         required: false
@@ -20,6 +20,16 @@ on:
         default: false
       better_net:
         description: "是否开启网络功能增强配置"
+        required: false
+        type: boolean
+        default: false
+      enable_Droidspaces:
+        description: "是否启用 Droidspaces (Linux 容器支持)"
+        required: false
+        type: boolean
+        default: false
+      enable_ntsync:
+        description: "是否启用 NTsync (依赖 Droidspaces)"
         required: false
         type: boolean
         default: false
@@ -174,6 +184,39 @@ jobs:
             echo "CONFIG_IP6_NF_TARGET_MASQUERADE=y"
           } >> ./arch/arm64/configs/gki_defconfig
 
+      - name: Setup Droidspaces
+        if: ${{ inputs.enable_Droidspaces }}
+        run: |
+          wget https://raw.githubusercontent.com/ravindu644/Droidspaces-OSS/refs/heads/main/Documentation/resources/kernel-patches/GKI/below-kernel-6.12/001.GKI-below-6.12-fix_sysvipc_kabi_6_7_8.patch
+          patch -d kernel_workspace/kernel_platform/common -p1 -F 3 < 001.GKI-below-6.12-fix_sysvipc_kabi_6_7_8.patch
+          cd kernel_workspace/kernel_platform/common
+          {
+            echo "CONFIG_SYSVIPC=y"
+            echo "CONFIG_POSIX_MQUEUE=y"
+            echo "CONFIG_IPC_NS=y"
+            echo "CONFIG_PID_NS=y"
+            echo "CONFIG_DEVTMPFS=y"
+            echo "CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y"
+            echo "CONFIG_NETFILTER_XT_TARGET_REJECT=y"
+            echo "CONFIG_NETFILTER_XT_TARGET_LOG=y"
+            echo "CONFIG_NETFILTER_XT_MATCH_RECENT=y"
+            echo "CONFIG_IP_SET=y"
+            echo "CONFIG_IP_SET_HASH_IP=y"
+            echo "CONFIG_IP_SET_HASH_NET=y"
+            echo "CONFIG_NETFILTER_XT_SET=y"
+          } >> ./arch/arm64/configs/gki_defconfig
+
+      - name: Setup NTsync
+        if: ${{ inputs.enable_Droidspaces && inputs.enable_ntsync }}
+        run: |
+          wget https://raw.githubusercontent.com/Goldzxcbug/Droidspaces_Kernel_patch/refs/heads/main/NTsync/ntsync_base.patch
+          wget https://raw.githubusercontent.com/Goldzxcbug/Droidspaces_Kernel_patch/refs/heads/main/NTsync/ntsync_compat_android15-6.6.patch
+
+          patch -d kernel_workspace/kernel_platform/common -p1 -F 3 < ntsync_base.patch
+          patch -d kernel_workspace/kernel_platform/common -p1 -F 3 < ntsync_compat_android15-6.6.patch
+ 
+          echo "CONFIG_NTSYNC=y" >> kernel_workspace/kernel_platform/common/arch/arm64/configs/gki_defconfig
+
       - name: Setup Baseband-guard
         if: ${{ inputs.baseband_guard }}
         run: |
@@ -242,5 +285,5 @@ jobs:
       - name: Upload AnyKernel3
         uses: actions/upload-artifact@v4
         with:
-          name: PKX110_AnyKernel3_ksu${{ inputs.ksu_version && format('_{0}', inputs.ksu_version) || '' }}${{ inputs.Apply_SCHED && '_sched' || '' }}${{ inputs.better_net && '_ipt' || '' }}${{ inputs.baseband_guard && '_bbg' || '' }}
+          name: PKX110_AnyKernel3_ksu${{ inputs.ksu_version && format('_{0}', inputs.ksu_version) || '_none' }}${{ inputs.Apply_SCHED && '_sched' || '' }}${{ inputs.better_net && '_net' || '' }}${{ inputs.enable_Droidspaces && (inputs.enable_ntsync && '_droid+ntsync' || '_droid') || '' }}${{ inputs.baseband_guard && '_bbg' || '' }}
           path: ./AnyKernel3/*
