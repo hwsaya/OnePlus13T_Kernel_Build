@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       ksu_version:  
-        description: "KernelSU 版本 (分支名、Tag 或 commit hash)，留空使用最新稳定版"
+        description: "KernelSU 版本 (latest、分支名、Tag 或 commit hash)，留空则不集成"
         required: false
         type: string
         default: ""
@@ -129,24 +129,20 @@ jobs:
 
       - name: Setup KSU
         run: |
+          if [ -z "${{ inputs.ksu_version }}" ]; then
+            echo "[+] 未指定 KernelSU 版本，跳过集成"
+            exit 0
+          fi
+
           cd kernel_workspace/kernel_platform
-          if [ -n "${{ inputs.ksu_version }}" ]; then
-            echo "[+] 安装指定版本的 KernelSU: ${{ inputs.ksu_version }}"
-            curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s ${{ inputs.ksu_version }}
-          else
+          
+          if [ "${{ inputs.ksu_version }}" = "latest" ]; then
             echo "[+] 安装最新稳定版的 KernelSU"
             curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
+          else
+            echo "[+] 安装指定版本的 KernelSU: ${{ inputs.ksu_version }}"
+            curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s ${{ inputs.ksu_version }}
           fi
-          
-          cd KernelSU
-          COMMIT_HASH=$(git rev-parse --short HEAD)
-          COMMIT_DATE=$(git log -1 --format=%cd --date=short)
-          BRANCH_OR_TAG=$(git describe --tags 2>/dev/null || git branch --show-current)
-
-          echo "=== KernelSU Version Information ==="
-          echo "版本: $BRANCH_OR_TAG"
-          echo "Commit Hash: $COMMIT_HASH"
-          echo "Commit Date: $COMMIT_DATE"
 
       - name: Add iptables extensions
         if: ${{ inputs.better_net }}
