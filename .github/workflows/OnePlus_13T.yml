@@ -4,10 +4,10 @@ on:
   workflow_dispatch:
     inputs:
       ksu_version:  
-        description: "KernelSU 版本 (latest、分支名、Tag 或 commit hash)，留空则不集成"
+        description: "KernelSU 版本 (默认留空使用最新稳定版，可指定分支名、Tag 或 commit hash)，none 则不集成"
         required: false
         type: string
-        default: "latest"
+        default: ""
       pull_kernel_src:
         description: "是否拉取远程内核源码(否则使用缓存)"
         required: false
@@ -120,39 +120,48 @@ jobs:
             kernel_workspace/kernel_platform/prebuilts/kernel-build-tools/linux-x86
           key: prebuilts-${{ runner.os }}
 
-      # OGKI 转换 GKI，无需修改 dtbo 开机
-      - name: Apply Convert HMBIRD_OGKI to HMBIRD_GKI
-        if: ${{ !inputs.Apply_SCHED }}
+      - name: Apply OGKI to GKI or SCHED
         run: |
-          cp hmbird_patch.c kernel_workspace/kernel_platform/common/drivers/
-          cd kernel_workspace/kernel_platform/common/drivers
-          if ! grep -q "hmbird_patch.o" Makefile; then
-            echo "obj-y += hmbird_patch.o" >> Makefile
+          if [ "${{ inputs.Apply_SCHED }}" = "true" ]; then
+            echo "[+] 应用风驰驱动 (SCHED)"
+            git clone https://github.com/Numbersf/SCHED_PATCH.git -b sm8750
+            dos2unix SCHED_PATCH/fengchi_oneplus_13t_b.patch
+            patch -d kernel_workspace/kernel_platform/common -p1 -F 3 < SCHED_PATCH/fengchi_oneplus_13t_b.patch
+          else
+            echo "[+] 转换 HMBIRD_OGKI 到 HMBIRD_GKI"
+            cp hmbird_patch.c kernel_workspace/kernel_platform/common/drivers/
+            cd kernel_workspace/kernel_platform/common/drivers
+            if ! grep -q "hmbird_patch.o" Makefile; then
+              echo "obj-y += hmbird_patch.o" >> Makefile
+            fi
           fi
 
-      - name: Apply SCHED
-        if: ${{ inputs.Apply_SCHED }}
-        run: |
-          git clone https://github.com/Numbersf/SCHED_PATCH.git -b sm8750
-          dos2unix SCHED_PATCH/fengchi_oneplus_13t_b.patch
-          patch -d kernel_workspace/kernel_platform/common -p1 -F 3 < SCHED_PATCH/fengchi_oneplus_13t_b.patch
-
       - name: Setup KSU
+        id: ksu
         run: |
-          if [ -z "${{ inputs.ksu_version }}" ]; then
-            echo "[+] 未指定 KernelSU 版本，跳过集成"
+          if [ "${{ inputs.ksu_version }}" = "none" ]; then
+            echo "[+] 跳过 KernelSU 集成"
+            echo "ksu_version_actual=none" >> $GITHUB_OUTPUT
             exit 0
           fi
 
-          cd kernel_workspace/kernel_platform
+          cd kernel_workspace/kernel_platform/common
           
-          if [ "${{ inputs.ksu_version }}" = "latest" ]; then
+          if [ -z "${{ inputs.ksu_version }}" ] || [ "${{ inputs.ksu_version }}" = "latest" ]; then
             echo "[+] 安装最新稳定版的 KernelSU"
             curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
           else
             echo "[+] 安装指定版本的 KernelSU: ${{ inputs.ksu_version }}"
             curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s ${{ inputs.ksu_version }}
           fi
+
+          # 添加对 Mountify (backslashxx/mountify) 模块的支持
+          echo "CONFIG_TMPFS_XATTR=y" >> ./arch/arm64/configs/gki_defconfig
+          echo "CONFIG_TMPFS_POSIX_ACL=y" >> ./arch/arm64/configs/gki_defconfig
+
+          cd KernelSU
+          KSU_VERSION=$(git describe --tags 2>/dev/null || git rev-parse --short HEAD)
+          echo "ksu_version_actual=$KSU_VERSION" >> $GITHUB_OUTPUT
 
       - name: Add iptables extensions
         if: ${{ inputs.better_net }}
@@ -270,7 +279,7 @@ jobs:
           ccache -s
 
       - name: Save ccache
-        if: always()
+        if: success()
         uses: actions/cache/save@v5
         with:
           path: ${{ env.CCACHE_DIR }}
@@ -283,7 +292,7 @@ jobs:
           # tree kernel_workspace/kernel_platform/common/out/arch/arm64/ > ./AnyKernel3/tree.txt || true
 
       - name: Upload AnyKernel3
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: PKX110_AnyKernel3_ksu${{ inputs.ksu_version && format('_{0}', inputs.ksu_version) || '_none' }}${{ inputs.Apply_SCHED && '_sched' || '' }}${{ inputs.better_net && '_net' || '' }}${{ inputs.enable_Droidspaces && (inputs.enable_ntsync && '_droid+ntsync' || '_droid') || '' }}${{ inputs.baseband_guard && '_bbg' || '' }}
+          name: PKX110_AnyKernel3_ksu_{{ steps.ksu.outputs.ksu_version_actual }}${{ inputs.Apply_SCHED && '_sched' || '' }}${{ inputs.better_net && '_net' || '' }}${{ inputs.enable_Droidspaces && (inputs.enable_ntsync && '_droid+ntsync' || '_droid') || '' }}${{ inputs.baseband_guard && '_bbg' || '' }}
           path: ./AnyKernel3/*
