@@ -18,6 +18,11 @@ on:
         required: false
         type: boolean
         default: false
+      enable_adios:
+        description: "是否启用 ADIOS IO 调度器"
+        required: false
+        type: boolean
+        default: false
       better_net:
         description: "是否开启网络功能增强配置"
         required: false
@@ -163,6 +168,18 @@ jobs:
           KSU_VERSION=$(git describe --tags 2>/dev/null || git rev-parse --short HEAD)
           echo "ksu_version_actual=$KSU_VERSION" >> $GITHUB_OUTPUT
 
+      - name: Enable ADIOS I/O Scheduler
+        if: inputs.enable_adios
+        run: |
+          wget https://raw.githubusercontent.com/qdykernel/Build_Oneplus_Realme_Action/refs/heads/main/.github/workflows/tools/adios_ioscheduler_6.6.patch
+          patch -d kernel_workspace/kernel_platform/common -p1 -F 3 < adios_ioscheduler_6.6.patch
+
+          cd kernel_workspace/kernel_platform/common
+          {
+            echo "CONFIG_MQ_IOSCHED_ADIOS=y"
+            echo "CONFIG_MQ_IOSCHED_DEFAULT_ADIOS=y"
+          } >> ./arch/arm64/configs/gki_defconfig
+
       - name: Add iptables extensions
         if: ${{ inputs.better_net }}
         run: |
@@ -294,5 +311,5 @@ jobs:
       - name: Upload AnyKernel3
         uses: actions/upload-artifact@v7
         with:
-          name: PKX110_AnyKernel3_ksu_{{ steps.ksu.outputs.ksu_version_actual }}${{ inputs.Apply_SCHED && '_sched' || '' }}${{ inputs.better_net && '_net' || '' }}${{ inputs.enable_Droidspaces && (inputs.enable_ntsync && '_droid+ntsync' || '_droid') || '' }}${{ inputs.baseband_guard && '_bbg' || '' }}
+          name: PKX110_AnyKernel3_ksu_{{ steps.ksu.outputs.ksu_version_actual }}${{ inputs.Apply_SCHED && '_sched' || '' }}${{ inputs.enable_adios && '_adios' || '' }}${{ inputs.better_net && '_net' || '' }}${{ inputs.enable_Droidspaces && (inputs.enable_ntsync && '_droid+ntsync' || '_droid') || '' }}${{ inputs.baseband_guard && '_bbg' || '' }}
           path: ./AnyKernel3/*
