@@ -311,5 +311,5 @@ jobs:
       - name: Upload AnyKernel3
         uses: actions/upload-artifact@v7
         with:
-          name: PKX110_AnyKernel3_ksu_{{ steps.ksu.outputs.ksu_version_actual }}${{ inputs.Apply_SCHED && '_sched' || '' }}${{ inputs.enable_adios && '_adios' || '' }}${{ inputs.better_net && '_net' || '' }}${{ inputs.enable_Droidspaces && (inputs.enable_ntsync && '_droid+ntsync' || '_droid') || '' }}${{ inputs.baseband_guard && '_bbg' || '' }}
+          name: PKX110_AnyKernel3_ksu_${{ steps.ksu.outputs.ksu_version_actual }}${{ inputs.Apply_SCHED && '_sched' || '' }}${{ inputs.enable_adios && '_adios' || '' }}${{ inputs.better_net && '_net' || '' }}${{ inputs.enable_Droidspaces && (inputs.enable_ntsync && '_droid+ntsync' || '_droid') || '' }}${{ inputs.baseband_guard && '_bbg' || '' }}
           path: ./AnyKernel3/*
