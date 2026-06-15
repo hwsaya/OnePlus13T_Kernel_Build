@@ -297,12 +297,20 @@ jobs:
           mkdir -p "${{ env.CCACHE_DIR }}"
           ccache -M "${{ env.CCACHE_MAXSIZE }}"
           ccache -z
+          echo "=== 构建前 CCache 状态 ==="
+          ccache -s
 
+          # 第一步：生成 .config
           make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
-          CC="ccache clang" PAHOLE=pahole LD=ld.lld HOSTLD=ld.lld \
-          O=out gki_defconfig
+            CC="ccache clang" PAHOLE=pahole LD=ld.lld HOSTLD=ld.lld \
+            O=out gki_defconfig
 
-          # --- 把 nftables 相关符号改为模块 ---
+          # 第二步：依赖解析
+          make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+            CC="ccache clang" PAHOLE=pahole LD=ld.lld HOSTLD=ld.lld \
+            O=out olddefconfig
+
+          # 第三步：olddefconfig 之后写入 nft 模块配置
           for cfg in \
             CONFIG_NF_TABLES \
             CONFIG_NF_TABLES_INET \
@@ -318,15 +326,17 @@ jobs:
             ./scripts/config --file out/.config --module "$cfg"
           done
 
-          # 重新解析依赖，把相关项设成默认值(必要时拉起依赖为 m/y)
-          make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
-          CC="ccache clang" PAHOLE=pahole LD=ld.lld HOSTLD=ld.lld \
-          O=out olddefconfig
+          # 验证写入结果
+          echo "=== NFT 配置确认 ==="
+          grep -E 'NF_TABLES|NFT_' out/.config
 
+          # 第四步：编译
           make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
-          CC="ccache clang" PAHOLE=pahole LD=ld.lld HOSTLD=ld.lld KCFLAGS+=-O2 KCFLAGS+=-Wno-error \
-          O=out Image modules
+            CC="ccache clang" PAHOLE=pahole LD=ld.lld HOSTLD=ld.lld \
+            KCFLAGS+=-O2 KCFLAGS+=-Wno-error \
+            O=out Image modules
 
+          echo "=== 构建后 CCache 状态 ==="
           ccache -s
 
       - name: Save ccache
