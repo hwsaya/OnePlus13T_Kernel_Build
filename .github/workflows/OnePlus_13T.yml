@@ -67,8 +67,7 @@ jobs:
                       /usr/lib/jvm
           sudo docker image prune --all --force
           df -h
-
-    steps:
+    
       - uses: actions/checkout@v6
 
       - name: Install dependencies
