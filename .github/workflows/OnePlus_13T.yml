@@ -57,6 +57,18 @@ jobs:
       CCACHE_MAXSIZE: "5G"
 
     steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet \
+                      /usr/local/lib/android \
+                      /opt/ghc \
+                      /opt/hostedtoolcache/CodeQL \
+                      /usr/local/share/boost \
+                      /usr/lib/jvm
+          sudo docker image prune --all --force
+          df -h
+
+    steps:
       - uses: actions/checkout@v6
 
       - name: Install dependencies
