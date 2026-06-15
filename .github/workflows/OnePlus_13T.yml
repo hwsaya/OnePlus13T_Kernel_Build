@@ -310,14 +310,16 @@ jobs:
             CC="ccache clang" PAHOLE=pahole LD=ld.lld HOSTLD=ld.lld \
             O=out olddefconfig
 
-          # 第三步：olddefconfig 之后写入 nft 模块配置
+          # bool 类型：只能 --enable（=y），不能 --module
+          ./scripts/config --file out/.config --enable CONFIG_NF_TABLES_INET
+          ./scripts/config --file out/.config --enable CONFIG_NF_TABLES_NETDEV
+
+          # tristate 类型：正常 --module（=m）
           for cfg in \
             CONFIG_NF_TABLES \
-            CONFIG_NF_TABLES_INET \
             CONFIG_NFT_CT \
             CONFIG_NFT_TPROXY \
             CONFIG_NFT_SOCKET \
-            CONFIG_NF_TABLES_NETDEV \
             CONFIG_NFT_NAT \
             CONFIG_NFT_MASQ \
             CONFIG_NFT_REDIR \
