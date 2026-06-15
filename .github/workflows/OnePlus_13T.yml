@@ -296,20 +296,37 @@ jobs:
 
           mkdir -p "${{ env.CCACHE_DIR }}"
           ccache -M "${{ env.CCACHE_MAXSIZE }}"
-
           ccache -z
-          echo "=== 构建前 CCache 状态 ==="
-          ccache -s
 
           make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
           CC="ccache clang" PAHOLE=pahole LD=ld.lld HOSTLD=ld.lld \
           O=out gki_defconfig
 
+          # --- 把 nftables 相关符号改为模块 ---
+          for cfg in \
+            CONFIG_NF_TABLES \
+            CONFIG_NF_TABLES_INET \
+            CONFIG_NFT_CT \
+            CONFIG_NFT_TPROXY \
+            CONFIG_NFT_SOCKET \
+            CONFIG_NF_TABLES_NETDEV \
+            CONFIG_NFT_NAT \
+            CONFIG_NFT_MASQ \
+            CONFIG_NFT_REDIR \
+            CONFIG_NFT_LOG \
+            CONFIG_NFT_COUNTER ; do
+            ./scripts/config --file out/.config --module "$cfg"
+          done
+
+          # 重新解析依赖，把相关项设成默认值(必要时拉起依赖为 m/y)
+          make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+          CC="ccache clang" PAHOLE=pahole LD=ld.lld HOSTLD=ld.lld \
+          O=out olddefconfig
+
           make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
           CC="ccache clang" PAHOLE=pahole LD=ld.lld HOSTLD=ld.lld KCFLAGS+=-O2 KCFLAGS+=-Wno-error \
-          O=out Image
+          O=out Image modules
 
-          echo "=== 构建后 CCache 状态 ==="
           ccache -s
 
       - name: Save ccache
@@ -323,7 +340,8 @@ jobs:
         run: |
           git clone https://github.com/Kernel-SU/AnyKernel3.git --depth=1
           cp kernel_workspace/kernel_platform/common/out/arch/arm64/boot/Image ./AnyKernel3/
-          # tree kernel_workspace/kernel_platform/common/out/arch/arm64/ > ./AnyKernel3/tree.txt || true
+          mkdir -p ./AnyKernel3/modules
+          find kernel_workspace/kernel_platform/common/out -name '*.ko' -exec cp {} ./AnyKernel3/modules/ \;
 
       - name: Upload AnyKernel3
         uses: actions/upload-artifact@v7
