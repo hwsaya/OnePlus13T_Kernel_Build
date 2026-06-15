@@ -111,6 +111,7 @@ jobs:
 
           if [ "${{ inputs.pull_kernel_src }}" = "true" ] || \
              [ "${{ steps.kernel-src-cache.outputs.cache-hit }}" != "true" ]; then
+            rm -rf kernel_platform/common   # ← 加这一行
             repo sync kernel_platform/common \
               -c --force-sync --optimized-fetch --prune --no-tags --no-clone-bundle \
               -j$(nproc --all)
